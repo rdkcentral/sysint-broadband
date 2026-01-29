@@ -1,0 +1,5 @@
+[D-BUS Service]
+Name=org.freedesktop.nm_connectivity
+Exec=/bin/true
+SystemdService=notify-network-ready.service
+User=root

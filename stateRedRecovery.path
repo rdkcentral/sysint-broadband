@@ -1,0 +1,12 @@
+[Unit]
+Description=State Red Firware Download App
+DefaultDependencies=false
+OnFailure=path-fail-notifier@%n.service
+
+[Path]
+PathChanged=/tmp/stateRedEnabled
+Unit=stateRedRecovery.service
+
+[Install]
+WantedBy=multi-user.target
+
