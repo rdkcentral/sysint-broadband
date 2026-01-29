@@ -1,0 +1,9 @@
+[Unit]
+Description=NTP Data Collection
+
+[Service]
+Type=simple
+ExecStart=/lib/rdk/ntp-data-collector.sh
+
+[Install]
+WantedBy=multi-user.target

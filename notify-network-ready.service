@@ -1,0 +1,8 @@
+[Unit]
+Description=Log Internet connectivity and Trigger network target
+After=dbus.service
+
+[Service]
+Type=oneshot
+ExecStartPre=/bin/touch /tmp/connectivity_check_done
+ExecStart=/lib/rdk/logMilestone.sh "INTERNET_FULLY_CONNECTED"

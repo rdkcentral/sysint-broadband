@@ -1,0 +1,10 @@
+[Unit]
+Description=State Red Firware Download App
+ConditionPathExists=/tmp/stateRedEnabled
+After=CcspXconf.service
+Requires=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c '/lib/rdk/stateRedRecovery.sh'
+RemainAfterExit=yes
