@@ -239,6 +239,7 @@ CURLPATH="/fss/gw"
 VERSION="/version.txt"
 
 http_code=0
+http_ret=0
 OutputFile='/tmp/httpresult.txt'
 
 # Function which will upload logs to TFTP server
@@ -356,6 +357,9 @@ useDirectRequest()
                    if [ "$http_code" = "200" ] || [ "$http_code" = "302" ] ;then
                         return 0
                    fi
+       	       else
+		            echo_t "Failed: Log Upload: $msg_tls_source Direct Communication - ret:$ret,http_code:$http_code"
+		            http_code=0
                fi
             else
                http_code=0
@@ -441,6 +445,9 @@ useCodebigRequest()
                 if [ "$http_code" = "200" ] || [ "$http_code" = "302" ] ;then
                     return 0
                 fi
+            else
+                echo_t "Failed:Codebig connection HttpCode received is : $http_code"
+                http_code=0
             fi
         else
             http_code=0
@@ -648,6 +655,9 @@ HttpLogUpload()
                         if [ "$http_code" = "200" ];then
                             break
                         fi
+	                else
+        	            echo_t "Failed:HttpCode received is : $http_code"
+                        http_code=0
                     fi
                 else
                     http_code=0
@@ -729,6 +739,9 @@ HttpLogUpload()
                         if [ "$http_code" = "200" ];then
                             break
                         fi
+		            else
+		   	            echo_t "Failed:HttpCode received is : $http_code"
+			            http_code=0
                     fi
                 else
                     http_code=0
@@ -778,7 +791,10 @@ HttpLogUpload()
                             if [ "$http_code" = "200" ];then
                                 break
                             fi
-                        fi
+	                    else
+                        	echo_t "http_code:$http_code"
+				            http_code=0
+                        fi			
                     else
                         http_code=0
                     fi
