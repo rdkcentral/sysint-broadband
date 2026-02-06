@@ -72,6 +72,9 @@ SW_UPGRADE_REBOOT="/nvram/reboot_due_to_sw_upgrade"
 #echo "Build Type is: $BUILD_TYPE"
 #echo "SERVER is: $SERVER"
 DeviceUP=0
+
+BOOT_PROCESSED_FLAG="/tmp/.rdkb_log_boot_done"
+
 # ARRISXB3-2544 :
 # Check if upload on reboot flag is ON. If "yes", then we will upload the 
 # log files first before starting monitoring of logs.
@@ -405,7 +408,7 @@ bootup_tarlogs()
                         fi
                         preserveThisLog $UploadFile $TarCreatePath
                     else
-                        echo_t "RDK_LOGGER: Keeping the tar in $TarCreatePath for non-xb3".
+                        echo_t "RDK_LOGGER: Keeping the tar in $TarCreatePath for non-xb3"
                     fi
                 fi
             fi
@@ -648,15 +651,224 @@ fi
 #               RDKB-26588 && TRDKB-355 - Mitigation   #
 #         To Ensure only one instance is running       #
 ########################################################
-RDKLOG_LOCK_DIR="/tmp/locking_logmonitor"
+UPLOAD_LOGS=`processDCMResponse`
+rdklogger_cron_enable=`syscfg get RdkbLogCronEnable`
 
-if mkdir $RDKLOG_LOCK_DIR
-then
-    echo "Got the first instance running"
+if [ "$rdklogger_cron_enable" = "true" ]; then
+    echo_t "rdkbLogMonitor.sh - rdklogger_cron_enable: $rdklogger_cron_enable"
+    LOCKFILE="/tmp/rdkb_cron.lock"
+    if [ -f "$LOCKFILE" ]; then
+        old_pid=$(cat "$LOCKFILE" 2>/dev/null)
+        if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+            echo_t "rdkbLogMonitor: Already running (cron protected, pid=$old_pid)"
+            exit 0
+        fi
+        rm -f "$LOCKFILE"
+    fi
+    echo $$ > "$LOCKFILE"
+    cleanup() { rm -f "$LOCKFILE"; }
+    trap cleanup EXIT
+
+    echo_t "rdkbLogMonitor: Cron PID $$ started (THRESHOLD CHECK MODE)"
+
+    # ===========================================
+    # FIRST RUN AFTER BOOT: do bootup path ONCE
+    # ===========================================
+    if [ ! -f "$BOOT_PROCESSED_FLAG" ]; then
+        echo_t "First run after boot: running bootup_tarlogs and bootup_upload"
+        touch "$BOOT_PROCESSED_FLAG"
+    else
+        # ===========================================
+        # SUBSEQUENT RUNS: THRESHOLD CHECK - EARLY EXIT
+        # ===========================================
+        getLogfileSize "$LOG_PATH"
+        if [ "$totalSize" -lt "$MAXSIZE" ]; then
+            echo_t "Log size below threshold ($totalSize < $MAXSIZE). Exiting early (cron will retry in 1 min)."
+            exit 0
+        fi
+        echo_t "THRESHOLD HIT! Log size: $totalSize >= $MAXSIZE. Starting full processing..."
+    fi
 else
-    echo "Already a instance is running; No 2nd instance"
-    exit
+    echo_t "rdkbLogMonitor.sh - rdklogger_cron_enable: $rdklogger_cron_enable"
+    RDKLOG_LOCK_DIR="/tmp/locking_logmonitor"
+
+    if mkdir $RDKLOG_LOCK_DIR
+    then
+        echo "Got the first instance running"
+    else
+        echo "Already a instance is running; No 2nd instance"
+        exit
+    fi
 fi
+
+device_state()
+{
+    if [ "$DeviceUP" = "0" ]; then
+	        #for rdkb-4260
+		t2CountNotify "SYS_INFO_bootup"
+	        if [ -f "$SW_UPGRADE_REBOOT" ]; then
+	           echo_t "RDKB_REBOOT: Device is up after reboot due to software upgrade"
+		   t2CountNotify "SYS_INFO_SW_upgrade_reboot"
+	           #deleting reboot_due_to_sw_upgrade file
+	           echo_t "Deleting file /nvram/reboot_due_to_sw_upgrade"
+	           rm -rf /nvram/reboot_due_to_sw_upgrade
+	           DeviceUP=1
+	        else
+	           echo_t "RDKB_REBOOT: Device is up after reboot"
+	           DeviceUP=1
+	        fi
+	    fi
+}
+
+regular_upload_state()
+{
+    if [ ! -e $REGULAR_UPLOAD ]
+	    then
+		getLogfileSize "$LOG_PATH"
+	        if [ "$totalSize" -ge "$MAXSIZE" ]; then
+                        echo_t "Log size max reached"
+			get_logbackup_cfg
+			if [ "$UPLOAD_LOGS" = "" ] || [ ! -f "$DCM_SETTINGS_PARSED" ]
+			then
+				echo_t "processDCMResponse to get the logUploadSettings"
+				UPLOAD_LOGS=`processDCMResponse`
+			fi  
+    
+			echo_t "UPLOAD_LOGS val is $UPLOAD_LOGS"
+			if [ "$UPLOAD_LOGS" = "true" ] || [ "$UPLOAD_LOGS" = "" ]
+			then
+				UPLOAD_LOGS="true"
+				# this file is touched to indicate log upload is enabled
+				# we check this file in logfiles.sh before creating tar ball.
+				# tar ball will be created only if this file exists.
+				echo_t "Log upload is enabled. Touching indicator in regular upload"         
+				touch /tmp/.uploadregularlogs
+			else
+				echo_t "Log upload is disabled. Removing indicator in regular upload"         
+				rm -rf /tmp/.uploadregularlogs                                
+			fi
+			
+			cd $TMP_UPLOAD
+			FILE_NAME=`ls | grep "tgz"`
+			# This event is set to "yes" whenever wan goes down. 
+			# So, we should not move tar to /tmp in that case.
+			wan_event=`sysevent get wan_event_log_upload`
+			wan_status=`sysevent get wan-status`
+			if [ "$FILE_NAME" != "" ] && [ "$boot_up_log_synced" = "false" ]; then
+				mkdir $TMP_LOG_UPLOAD_PATH
+				mv $FILE_NAME $TMP_LOG_UPLOAD_PATH
+			fi
+			cd -
+			boot_up_log_synced="true"
+			if [ "$LOGBACKUP_ENABLE" == "true" ]; then	
+				createSysDescr
+				syncLogs_nvram2
+                                # Check if there is any tar ball to be preserved
+                                # else tar ball will be removed in backupnvram2logs
+                                logBackupEnable=`syscfg get log_backup_enable`
+                                if [ "$logBackupEnable" = "true" ];then
+                                   echo_t "Back up to preserve location is enabled"
+                                   fileName=`ls -tr $TMP_UPLOAD | grep tgz | head -n 1`
+                                   if [ "$fileName" != "" ]
+                                   then
+                                      # Call PreserveLog which will move logs to preserve location
+                                      preserveThisLog $fileName $TMP_UPLOAD
+                                   fi
+                                fi 	
+				backupnvram2logs "$TMP_UPLOAD"
+			else
+				syncLogs
+				backupAllLogs "$LOG_PATH" "$LOG_BACK_UP_PATH" "cp"
+			fi
+		        if [ "$UPLOAD_LOGS" = "true" ]
+			then
+				$RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "false"
+                                http_ret=$?
+                                echo_t "Logupload http_ret value = $http_ret"
+                                if [ "$http_ret" = "200" ] || [ "$http_ret" = "302" ] ;then
+                                      logBackupEnable=`syscfg get log_backup_enable`
+                                      if [ "$logBackupEnable" = "true" ] ; then
+                                            if [ -d $PRESERVE_LOG_PATH ] ; then
+                                                 cd $PRESERVE_LOG_PATH
+                                                 fileToUpload=`ls | grep tgz`
+                                                 if [ "$fileToUpload" != "" ] ;then
+                                                     file_list=$fileToUpload
+                                                     echo_t "Direct comm. available preserve logs = $fileToUpload"
+                                                     $RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "true" "" $PRESERVE_LOG_PATH
+                                                 else
+                                                        echo_t "Direct comm. No preserve logs found in $PRESERVE_LOG_PATH"
+                                                 fi
+                                             fi
+                                       fi
+                                else
+                                      echo_t "Preserve Logupload not success because of http val $http_ret"
+                                fi
+			else
+				echo_t "Regular log upload is disabled"
+			fi
+	    	fi
+	    fi
+	    
+	# Syncing logs after particular interval
+	get_logbackup_cfg
+	if [ "$LOGBACKUP_ENABLE" == "true" ]; then # nvram2 supported and backup is true
+		minute_count=$((minute_count + 1))
+		bootup_time_sec=$(cut -d. -f1 /proc/uptime)
+		if [ "$bootup_time_sec" -le "2400" ] && [ $minute_count -eq 10 ]; then
+			minute_count=0
+			echo_t "RDK_LOGGER: Syncing every 10 minutes for initial 30 minutes"
+			syncLogs_nvram2
+		elif [ "$minute_count" -ge "$LOGBACKUP_INTERVAL" ]; then
+			minute_count=0
+			syncLogs_nvram2
+			if [ "$ATOM_SYNC" == "" ]; then
+			   syncLogs
+			fi
+			#ARRISXB6-5184
+			if [ "$BOX_TYPE" = "XB6" -a "$MANUFACTURE" = "Arris" ] ; then
+			    remove_hidden_files "/rdklogs/logs"
+			    remove_hidden_files "/nvram/logs"
+			    remove_hidden_files "/nvram2/logs"
+			fi
+		fi
+	else
+		# Suppress ls errors to prevent constant prints in non supported devices
+		file_list=`ls 2>/dev/null $LOG_SYNC_PATH`
+		if [ "$file_list" != "" ]; then
+			echo_t "RDK_LOGGER: Disabling nvram2 logging"
+			createSysDescr
+                        
+			if [ "$UPLOAD_LOGS" = "" ] || [ ! -f "$DCM_SETTINGS_PARSED" ]
+			then
+				echo_t "processDCMResponse to get the logUploadSettings"
+				UPLOAD_LOGS=`processDCMResponse`
+			fi  
+    
+			echo_t "UPLOAD_LOGS val is $UPLOAD_LOGS"
+			if [ "$UPLOAD_LOGS" = "true" ] || [ "$UPLOAD_LOGS" = "" ]		
+			then
+				UPLOAD_LOGS="true"
+				echo_t "Log upload is enabled. Touching indicator in maintenance window"         
+				touch /tmp/.uploadregularlogs
+			else
+				echo_t "Log upload is disabled. Removing indicator in maintenance window"         
+				rm /tmp/.uploadregularlogs
+			fi
+			syncLogs_nvram2
+			if [ "$ATOM_SYNC" == "" ]; then
+				syncLogs
+			fi
+			backupnvram2logs "$TMP_UPLOAD"
+		        if [ "$UPLOAD_LOGS" = "true" ]
+			then			
+				$RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "false" "true"
+			else
+				echo_t "Regular log upload is disabled"         
+			fi
+		fi
+	fi
+}
+
 ########################################################
 
 PEER_COMM_ID="/tmp/elxrretyt-logm.swr"
@@ -823,189 +1035,41 @@ fi
 
 # rdkb-24823 create tar file, then do upload in the background,
 bootup_tarlogs
-bootup_upload &
+if [ "$rdklogger_cron_enable" = "true" ]; then
+    bootup_upload
+else
+    bootup_upload &
+fi
 
-UPLOAD_LOGS=`processDCMResponse`
-while [ "$loop" = "1" ]
-do
-	    if [ "$DeviceUP" = "0" ]; then
-	        #for rdkb-4260
-		t2CountNotify "SYS_INFO_bootup"
-	        if [ -f "$SW_UPGRADE_REBOOT" ]; then
-	           echo_t "RDKB_REBOOT: Device is up after reboot due to software upgrade"
-		   t2CountNotify "SYS_INFO_SW_upgrade_reboot"
-	           #deleting reboot_due_to_sw_upgrade file
-	           echo_t "Deleting file /nvram/reboot_due_to_sw_upgrade"
-	           rm -rf /nvram/reboot_due_to_sw_upgrade
-	           DeviceUP=1
-	        else
-	           echo_t "RDKB_REBOOT: Device is up after reboot"
-	           DeviceUP=1
-	        fi
-	    fi
+# Service mode: Infinite loop
+service_mode() {
+    echo_t "rdkbLogMonitor.sh - Running in SERVICE mode (infinite loop)"
 
-	    sleep 60
-	    if [ ! -e $REGULAR_UPLOAD ]
-	    then
-		getLogfileSize "$LOG_PATH"
+    while [ 1 ];
+    do
+        device_state
+        sleep 60
+        regular_upload_state
+    done
+    ########################################################
+    #               RDKB-26588 && TRDKB-355 - Mitigation   #
+    #         To Ensure only one instance is running       #
+    ########################################################
+    rm -rf $RDKLOG_LOCK_DIR
+    ########################################################
+}
 
-	        if [ "$totalSize" -ge "$MAXSIZE" ]; then
-                        echo_t "Log size max reached"
-			get_logbackup_cfg
+# Cron mode: Single execution then exit
+cron_mode() {
+    echo_t "rdkbLogMonitor.sh - Running in CRON mode"
+    device_state
+    regular_upload_state
+    echo_t "rdkbLogMonitor.sh - Exiting (next cron in 1 min)"sss
+    exit 0
+}
 
-			if [ "$UPLOAD_LOGS" = "" ] || [ ! -f "$DCM_SETTINGS_PARSED" ]
-			then
-				echo_t "processDCMResponse to get the logUploadSettings"
-				UPLOAD_LOGS=`processDCMResponse`
-			fi  
-    
-			echo_t "UPLOAD_LOGS val is $UPLOAD_LOGS"
-			if [ "$UPLOAD_LOGS" = "true" ] || [ "$UPLOAD_LOGS" = "" ]
-			then
-				UPLOAD_LOGS="true"
-				# this file is touched to indicate log upload is enabled
-				# we check this file in logfiles.sh before creating tar ball.
-				# tar ball will be created only if this file exists.
-				echo_t "Log upload is enabled. Touching indicator in regular upload"         
-				touch /tmp/.uploadregularlogs
-			else
-				echo_t "Log upload is disabled. Removing indicator in regular upload"         
-				rm -rf /tmp/.uploadregularlogs                                
-			fi
-			
-			cd $TMP_UPLOAD
-			FILE_NAME=`ls | grep "tgz"`
-			# This event is set to "yes" whenever wan goes down. 
-			# So, we should not move tar to /tmp in that case.
-			wan_event=`sysevent get wan_event_log_upload`
-			wan_status=`sysevent get wan-status`
-			if [ "$FILE_NAME" != "" ] && [ "$boot_up_log_synced" = "false" ]; then
-				mkdir $TMP_LOG_UPLOAD_PATH
-				mv $FILE_NAME $TMP_LOG_UPLOAD_PATH
-			fi
-			cd -
-			boot_up_log_synced="true"
-			if [ "$LOGBACKUP_ENABLE" == "true" ]; then	
-				createSysDescr
-				syncLogs_nvram2
-
-                                # Check if there is any tar ball to be preserved
-                                # else tar ball will be removed in backupnvram2logs
-                                logBackupEnable=`syscfg get log_backup_enable`
-                                if [ "$logBackupEnable" = "true" ];then
-                                   echo_t "Back up to preserve location is enabled"
-                                   fileName=`ls -tr $TMP_UPLOAD | grep tgz | head -n 1`
-                                   if [ "$fileName" != "" ]
-                                   then
-                                      # Call PreserveLog which will move logs to preserve location
-                                      preserveThisLog $fileName $TMP_UPLOAD
-                                   fi
-                                fi 	
-
-				backupnvram2logs "$TMP_UPLOAD"
-			else
-				syncLogs
-				backupAllLogs "$LOG_PATH" "$LOG_BACK_UP_PATH" "cp"
-			fi
-		        if [ "$UPLOAD_LOGS" = "true" ]
-			then
-				$RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "false"
-                                http_ret=$?
-                                echo_t "Logupload http_ret value = $http_ret"
-                                if [ "$http_ret" = "200" ] || [ "$http_ret" = "302" ] ;then
-                                      logBackupEnable=`syscfg get log_backup_enable`
-
-                                      if [ "$logBackupEnable" = "true" ] ; then
-                                            if [ -d $PRESERVE_LOG_PATH ] ; then
-                                                 cd $PRESERVE_LOG_PATH
-                                                 fileToUpload=`ls | grep tgz`
-                                                 if [ "$fileToUpload" != "" ] ;then
-                                                     file_list=$fileToUpload
-                                                     echo_t "Direct comm. available preserve logs = $fileToUpload"
-                                                     $RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "true" "" $PRESERVE_LOG_PATH
-                                                 else
-                                                        echo_t "Direct comm. No preserve logs found in $PRESERVE_LOG_PATH"
-                                                 fi
-                                             fi
-                                       fi
-                                else
-                                      echo_t "Preserve Logupload not success because of http val $http_ret"
-                                fi
-
-			else
-				echo_t "Regular log upload is disabled"
-			fi
-	    	fi
-	    fi
-	    
-	# Syncing logs after particular interval
-	get_logbackup_cfg
-	if [ "$LOGBACKUP_ENABLE" == "true" ]; then # nvram2 supported and backup is true
-		minute_count=$((minute_count + 1))
-		bootup_time_sec=$(cut -d. -f1 /proc/uptime)
-		if [ "$bootup_time_sec" -le "2400" ] && [ $minute_count -eq 10 ]; then
-			minute_count=0
-			echo_t "RDK_LOGGER: Syncing every 10 minutes for initial 30 minutes"
-			syncLogs_nvram2
-		elif [ "$minute_count" -ge "$LOGBACKUP_INTERVAL" ]; then
-			minute_count=0
-			syncLogs_nvram2
-			if [ "$ATOM_SYNC" == "" ]; then
-			   syncLogs
-			fi
-			#ARRISXB6-5184
-			if [ "$BOX_TYPE" = "XB6" -a "$MANUFACTURE" = "Arris" ] ; then
-			    remove_hidden_files "/rdklogs/logs"
-			    remove_hidden_files "/nvram/logs"
-			    remove_hidden_files "/nvram2/logs"
-			fi
-		fi
-	else
-		# Suppress ls errors to prevent constant prints in non supported devices
-		file_list=`ls 2>/dev/null $LOG_SYNC_PATH`
-		if [ "$file_list" != "" ]; then
-			echo_t "RDK_LOGGER: Disabling nvram2 logging"
-			createSysDescr
-                        
-			if [ "$UPLOAD_LOGS" = "" ] || [ ! -f "$DCM_SETTINGS_PARSED" ]
-			then
-				echo_t "processDCMResponse to get the logUploadSettings"
-				UPLOAD_LOGS=`processDCMResponse`
-			fi  
-    
-			echo_t "UPLOAD_LOGS val is $UPLOAD_LOGS"
-			if [ "$UPLOAD_LOGS" = "true" ] || [ "$UPLOAD_LOGS" = "" ]		
-			then
-				UPLOAD_LOGS="true"
-				echo_t "Log upload is enabled. Touching indicator in maintenance window"         
-				touch /tmp/.uploadregularlogs
-			else
-				echo_t "Log upload is disabled. Removing indicator in maintenance window"         
-				rm /tmp/.uploadregularlogs
-			fi
-
-			syncLogs_nvram2
-			if [ "$ATOM_SYNC" == "" ]; then
-				syncLogs
-			fi
-			backupnvram2logs "$TMP_UPLOAD"
-
-		        if [ "$UPLOAD_LOGS" = "true" ]
-			then			
-				$RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "false" "true"
-			else
-				echo_t "Regular log upload is disabled"         
-			fi
-
-		fi
-	fi
-              	
-done
-
-########################################################
-#               RDKB-26588 && TRDKB-355 - Mitigation   #
-#         To Ensure only one instance is running       #
-########################################################
-rm -rf $RDKLOG_LOCK_DIR
-########################################################
-
+if [ "$rdklogger_cron_enable" = "true" ]; then
+    cron_mode
+else
+    service_mode
+fi

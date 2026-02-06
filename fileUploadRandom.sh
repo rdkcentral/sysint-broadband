@@ -226,37 +226,59 @@ getTFTPServer()
 	fi
 }
 
+# Single function for maintenance window check (used by BOTH modes)
+check_maintenance_window_upload()
+{
+    upload_logfile=1
+    if [ "$UTC_ENABLE" == "true" ]; then
+        cur_hr=`LTime H | tr -dc '0-9'`
+        cur_min=`LTime M | tr -dc '0-9'`
+    else
+        cur_hr=`date +"%H"`
+        cur_min=`date +"%M"`
+    fi
+
+    if [ "$cur_hr" -ge "02" ] && [ "$cur_hr" -le "05" ]; then
+        if [ "$cur_hr" = "05" ] && [ "$cur_min" != "00" ]; then
+            upload_logfile=1
+        else
+            if [ "$upload_logfile" = "1" ]; then
+                calcRandTimeandUpload
+            fi
+        fi
+    else
+        upload_logfile=1
+    fi
+}
 
 BUILD_TYPE=`getBuildType`
 SERVER=`getTFTPServer $BUILD_TYPE`
-loop=1
-upload_logfile=1
-while [ $loop -eq 1 ]
-do
-    sleep 60
 
-	if [ "$UTC_ENABLE" == "true" ]
-	then
-		cur_hr=`LTime H | tr -dc '0-9'`
-		cur_min=`LTime M | tr -dc '0-9'`
-	else
-		cur_hr=`date +"%H"`
-		cur_min=`date +"%M"`
-	fi
+# Service mode: Infinite loop (ORIGINAL logic)
+service_mode() {
+    echo_t "fileUploadRandom.sh - Running in SERVICE mode (infinite loop)"
 
-  if [ "$cur_hr" -ge "02" ] && [ "$cur_hr" -le "05" ]
-	then
-      	     if [ "$cur_hr" = "05" ] && [ "$cur_min" != "00" ]
-	     then
-		   upload_logfile=1		
-	     else
-	  	   if [ "$upload_logfile" = "1" ]
-		   then	
-	 	         calcRandTimeandUpload
-	   	   fi
-	     fi
-	else
-		upload_logfile=1
-	fi
-done
+    while [ 1 ];
+    do
+        sleep 60
+        check_maintenance_window_upload
+    done
+}
 
+# Cron mode: Single execution matching window logic
+cron_mode() {
+    echo_t "fileUploadRandom.sh - Running in CRON mode (single check)"
+    check_maintenance_window_upload
+    echo_t "fileUploadRandom.sh - Exiting (next cron in 1 min)"
+    exit 0
+}
+
+rdklogger_cron_enable=`syscfg get RdkbLogCronEnable`
+echo_t "FileUploadRandom.sh - rdklogger_cron_enable: $rdklogger_cron_enable"
+
+# Cron mode if syscfg=1, else service mode
+if [ "$rdklogger_cron_enable" = "true" ]; then
+    cron_mode
+else
+    service_mode
+fi
