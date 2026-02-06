@@ -34,7 +34,17 @@ DCM_PATH="/lib/rdk"
 SELFHEAL_PATH="/usr/ccsp/tad"
 CERT_CHECKER_PATH="/lib/rdk"
 
-calcRandTimeandUpload()
+CRON_MODE=0
+FILEUPLOAD_TMP_DIR="/tmp/.fileupload_random"
+RANDOM_DELAY_FILE="$FILEUPLOAD_TMP_DIR/.remaining_secs"
+TICK_FILE="$FILEUPLOAD_TMP_DIR/.tick"
+CRON_INSTALLED_FLAG="$FILEUPLOAD_TMP_DIR/.cron_installed"
+
+if [ ! -d "$FILEUPLOAD_TMP_DIR" ]; then
+    mkdir -p "$FILEUPLOAD_TMP_DIR"
+fi
+
+generate_random_delay()
 {
     rand_hr=0
     rand_min=0
@@ -43,18 +53,74 @@ calcRandTimeandUpload()
     # Calculate random min
     rand_min=`awk -v min=0 -v max=59 -v seed="$(date +%N)" 'BEGIN{srand(seed);print int(min+rand()*(max-min+1))}'`
 
-    # Calculate random second
+    # Calculate random second  
     rand_sec=`awk -v min=0 -v max=59 -v seed="$(date +%N)" 'BEGIN{srand(seed);print int(min+rand()*(max-min+1))}'`
-        
+
     # Calculate random hour
     rand_hr=`awk -v min=0 -v max=2 -v seed="$(date +%N)" 'BEGIN{srand(seed);print int(min+rand()*(max-min+1))}'`
 
-    echo_t "RDK Logger : Random Time Generated : $rand_hr hr $rand_min min $rand_sec sec"
-	
+    echo_t "RDK Logger : Random Time Generated : $rand_hr hr $rand_min min $rand_sec sec" >&2
+
     min_to_sleep=$(($rand_hr*60 + $rand_min))
     sec_to_sleep=$(($min_to_sleep*60 + $rand_sec))
-    sleep $sec_to_sleep;
-   
+    
+    echo "$sec_to_sleep"
+}
+
+calcRandTimeandUpload()
+{
+    delay_completed=0	
+	if [ "$CRON_MODE" = "1" ]; then  
+	    if [ ! -f "$RANDOM_DELAY_FILE" ]; then
+            sec_to_sleep=$(generate_random_delay)
+            echo "$sec_to_sleep" > "$RANDOM_DELAY_FILE"
+            echo_t "CRON MODE: Initial random delay stored: $sec_to_sleep seconds" >&2
+        else
+            echo_t "CRON MODE: Random delay already generated, reusing existing value" >&2
+        fi
+		
+        if [ -f "$TICK_FILE" ]; then
+            current_tick=$(cat "$TICK_FILE")
+        else
+            current_tick=0
+        fi
+
+        if [ "$current_tick" = "0" ]; then
+            remaining=$(cat "$RANDOM_DELAY_FILE" 2>/dev/null)
+            [ -z "$remaining" ] && remaining=0
+
+            if [ "$remaining" -le 300 ]; then
+				echo_t "SHORT DELAY: Sleeping $remaining seconds NOW" >&2
+				[ "$remaining" -gt 0 ] && sleep "$remaining"
+				rm -f "$RANDOM_DELAY_FILE" "$TICK_FILE"
+				delay_completed=1
+            else
+                echo_t "CRON MODE: Remaining delay before upload: $remaining seconds" >&2
+                new_remaining=$((remaining - 300))
+                if [ "$new_remaining" -lt 0 ]; then
+                    new_remaining=0
+                fi
+                echo $new_remaining > "$RANDOM_DELAY_FILE"
+                echo_t "CRON MODE: Updated remaining delay to $new_remaining seconds, exiting" >&2
+            fi
+        else
+            echo_t "CRON MODE: Skipping countdown this minute (tick=$current_tick/4)" >&2
+        fi
+
+        new_tick=$(( (current_tick + 1) % 5 ))
+        echo "$new_tick" > "$TICK_FILE"
+
+        if [ "$delay_completed" != "1" ]; then
+            return 0
+        fi
+    fi
+
+    if [ "$CRON_MODE" != "1" ]; then
+        sec_to_sleep=$(generate_random_delay)
+        echo_t "SERVICE MODE: Sleeping for $sec_to_sleep seconds" >&2
+        sleep "$sec_to_sleep"
+    fi
+
     if [ -f "$MAINTENANCEWINDOW" ]
     then
         rm -rf $MAINTENANCEWINDOW
@@ -226,37 +292,87 @@ getTFTPServer()
 	fi
 }
 
+# Single function for maintenance window check (used by BOTH modes)
+check_maintenance_window_upload()
+{
+    upload_logfile=1
+    if [ "$UTC_ENABLE" == "true" ]; then
+        cur_hr=`LTime H | tr -dc '0-9'`
+        cur_min=`LTime M | tr -dc '0-9'`
+    else
+        cur_hr=`date +"%H"`
+        cur_min=`date +"%M"`
+    fi
+
+    if [ "$cur_hr" -ge "02" ] && [ "$cur_hr" -le "05" ]; then
+        if [ "$cur_hr" = "05" ] && [ "$cur_min" != "00" ]; then
+            upload_logfile=1
+        else
+            if [ "$upload_logfile" = "1" ]; then
+                calcRandTimeandUpload
+            fi
+        fi
+    else
+        upload_logfile=1
+    fi
+}
 
 BUILD_TYPE=`getBuildType`
 SERVER=`getTFTPServer $BUILD_TYPE`
-loop=1
-upload_logfile=1
-while [ $loop -eq 1 ]
-do
-    sleep 60
 
-	if [ "$UTC_ENABLE" == "true" ]
-	then
-		cur_hr=`LTime H | tr -dc '0-9'`
-		cur_min=`LTime M | tr -dc '0-9'`
-	else
-		cur_hr=`date +"%H"`
-		cur_min=`date +"%M"`
-	fi
+install_cron_entry() {
+    CRON_LINE="* * * * * /rdklogger/fileUploadRandom.sh"
+    
+    if crontab -l 2>/dev/null | grep -q "fileUploadRandom.sh"; then
+        echo_t "fileUploadRandom.sh - Cron entry already present"
+        return 0
+    fi
 
-  if [ "$cur_hr" -ge "02" ] && [ "$cur_hr" -le "05" ]
-	then
-      	     if [ "$cur_hr" = "05" ] && [ "$cur_min" != "00" ]
-	     then
-		   upload_logfile=1		
-	     else
-	  	   if [ "$upload_logfile" = "1" ]
-		   then	
-	 	         calcRandTimeandUpload
-	   	   fi
-	     fi
-	else
-		upload_logfile=1
-	fi
-done
+    (crontab -l 2>/dev/null; echo "$CRON_LINE") | crontab -
+    rc=$?
+    
+    if [ $rc -eq 0 ]; then
+        echo_t "fileUploadRandom.sh - Cron installed cleanly: $CRON_LINE"
+    else
+        echo_t "fileUploadRandom.sh - Cron install failed (rc=$rc)"
+    fi
+}
 
+# Service mode: Infinite loop (ORIGINAL logic)
+service_mode() {
+    echo_t "fileUploadRandom.sh - Running in SERVICE mode (infinite loop)"
+
+    while [ 1 ];
+    do
+        sleep 60
+		CRON_MODE=0
+        check_maintenance_window_upload
+    done
+}
+
+rdklogger_cron_enable=`syscfg get RdkbLogCronEnable`
+echo_t "FileUploadRandom.sh - rdklogger_cron_enable: $rdklogger_cron_enable"
+
+if [ "$rdklogger_cron_enable" = "true" ]; then
+    CRON_MODE=1
+	if [ ! -d "$FILEUPLOAD_TMP_DIR" ]; then
+        mkdir -p "$FILEUPLOAD_TMP_DIR"
+    fi
+    if [ ! -f "$CRON_INSTALLED_FLAG" ]; then
+        echo_t "fileUploadRandom.sh - SERVICE first run, installing cron"
+        install_cron_entry
+        touch "$CRON_INSTALLED_FLAG"
+        echo_t "fileUploadRandom.sh - Service setup complete"
+    fi
+	echo_t "fileUploadRandom.sh - running"
+    if [ -f "$RANDOM_DELAY_FILE" ]; then
+        calcRandTimeandUpload
+    else
+        check_maintenance_window_upload
+    fi
+    exit 0
+else
+    CRON_MODE=0
+    echo_t "fileUploadRandom.sh - SERVICE mode (cron disabled)"
+    service_mode
+fi
