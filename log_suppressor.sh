@@ -75,11 +75,37 @@ for input_file in "$input_dir"/*; do
             message = substr($0, RLENGTH + 1)
             key = message
             has_timestamp = 1
+        } else if (match($0, /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z[[:space:]]*:/)) {
+            timestamp = substr($0, 1, RLENGTH)
+            message = substr($0, RLENGTH + 1)
+            key = message
+            has_timestamp = 1
         } else {
-            message = $0
-            key = NR
-            has_timestamp = 0
+            # Line has no recognizable timestamp → flush buffer and print raw line
+
+            if (num_messages > 0) {
+                for (i = 1; i <= num_messages; i++) {
+                key = order[i]
+                split(messages[key], data, "\t")
+                count = data[1]
+                first_line = data[2]
+                timestamps = data[3]
+
+                if (count > 1)
+                    print first_line " (Suppressed count: " count ", Occurrences: " timestamps ".)"
+                else
+                    print first_line
+                }
+
+            delete messages
+            delete order
+            num_messages = 0
+            }
+
+        print $0
+        next
         }
+
 
         if (has_timestamp) {
             if (key in messages) {
