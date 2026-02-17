@@ -37,17 +37,20 @@ calcRebootExecTime()
         time_offset=`dmcli eRT getv Device.Time.TimeOffset | grep "value:" | cut -d ":" -f 3 | tr -d ' '`
 
         if [ "x$BOX_TYPE" = "xHUB4" ] || [ "x$BOX_TYPE" = "xSR213" ]; then
-            #Maintence start and end time in UTC
+            #Maintenance start and end time in UTC
             main_start_time=$start_time
             main_end_time=$end_time
         else
-            #Maintence start and end time in local
-            main_start_time=$((start_time-time_offset))
-            main_end_time=$((end_time-time_offset))
+            #Maintenance start and end time in local.  Ensure that start and end times are non-negative.
+            main_start_time=$(((start_time - time_offset + 86400) % 86400))
+            main_end_time=$(((end_time - time_offset + 86400) % 86400))
         fi
 
         #calculate random time in sec
-        rand_time_in_sec=`awk -v min=$main_start_time -v max=$main_end_time -v seed="$(date +%N)" 'BEGIN{srand(seed);print int(min+rand()*(max-min+1))}'`
+        rand_time_in_sec=`awk -v min=$main_start_time -v max=$main_end_time -v seed="$(date +%N)" 'BEGIN{
+            if (max < min) max += 86400;  #handle maintenance window crossing midnight
+                srand(seed);print int(min+rand()*(max-min+1));
+        }'`
 
         # To avoid cron to be set beyond 24 hr clock limit
         if [ $rand_time_in_sec -ge 86400 ]
