@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 
 if [ $# -ne 2 ]; then
     echo "Usage: $0 input_directory output_directory"
@@ -23,7 +23,7 @@ total=0
 # Count total files
 for file in "$INPUT_DIR"/*; do
     if [ -f "$file" ]; then
-        ((total++))
+        total=$((total + 1))
     fi
 done
 
@@ -236,7 +236,7 @@ END {
 }
 ' "$INPUT_FILE" > "$OUTPUT_FILE"
     
-    ((processed++))
+    processed=$((processed + 1))
     echo "  ✓ Output: $OUTPUT_FILE"
 done
 
