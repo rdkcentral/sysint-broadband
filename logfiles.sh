@@ -362,6 +362,17 @@ syncLogs_nvram2()
 {
     option=$1
 
+	# RDK rootfs is read-only; copy log_suppress.sh to /tmp if not executable
+    LOG_SUPPRESS_SCRIPT="$RDK_LOGGER_PATH/log_suppress.sh"
+    if [ -f "$LOG_SUPPRESS_SCRIPT" ] && [ ! -x "$LOG_SUPPRESS_SCRIPT" ]; then
+        TMP_LOG_SUPPRESS="/tmp/log_suppress.sh"
+        if [ ! -f "$TMP_LOG_SUPPRESS" ]; then
+            cp "$LOG_SUPPRESS_SCRIPT" "$TMP_LOG_SUPPRESS"
+            chmod +x "$TMP_LOG_SUPPRESS"
+        fi
+        LOG_SUPPRESS_SCRIPT="$TMP_LOG_SUPPRESS"
+    fi
+
     echo_t "sync logs to nvram2"
     if [ ! -d "$LOG_SYNC_PATH" ]; then
         #echo "making sync dir"
@@ -409,9 +420,9 @@ syncLogs_nvram2()
     log_files_sync_to_nvram2 $option
 
     # Suppress repeated logs after syncing to nvram2
-    if [ -f $RDK_LOGGER_PATH/log_suppress.sh ]; then
+    if [ -f "$LOG_SUPPRESS_SCRIPT" ]; then
         echo_t "Analysing and suppressing repeated logs in nvram2"
-        sh $RDK_LOGGER_PATH/log_suppress.sh $LOG_SYNC_PATH
+        sh "$LOG_SUPPRESS_SCRIPT" $LOG_SYNC_PATH
     fi
 
     if [ -f /tmp/backup_onboardlogs ]; then
