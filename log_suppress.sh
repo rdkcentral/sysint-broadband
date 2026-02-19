@@ -49,7 +49,7 @@ suppress_log_file()
     local INPUT_FILE="$1"
     local OUTPUT_FILE="$2"
     local TEMP_FILE="${OUTPUT_FILE}.suppress.tmp"
-
+    
     awk '
 BEGIN {
     idx = 0
@@ -60,13 +60,13 @@ BEGIN {
     if (length($0) == 0 || $0 ~ /^[[:space:]]*$/) {
         next
     }
-
+    
     idx++
     lines[idx] = $0
     has_timestamp = 0
     timestamp = ""
     message = ""
-
+    
     # Try to extract timestamp - supports multiple formats
     # Format: YYMMDD-HH:MM:SS.microseconds (6 digits for date)
     if (match($0, /^[0-9]{6}-[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6} /)) {
@@ -110,7 +110,7 @@ BEGIN {
         message = substr($0, RLENGTH + 1)
         has_timestamp = 1
     }
-    # Format: [OneWifi] YYMMDD-HH:MM:SS.microseconds<I/E>
+    # Format: [OneWifi] YYMMDD-HH:MM:SS.microseconds<I/E> 
     else if (match($0, /^\[OneWifi\] [0-9]{6}-[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}<[IE]> /)) {
         timestamp = substr($0, 11, 17)
         message = substr($0, 30)
@@ -146,7 +146,7 @@ BEGIN {
         timestamp = ""
         message = $0
     }
-
+    
     timestamps[idx] = timestamp
     content[idx] = message
     gsub(/^[ \t]+/, "", content[idx])
@@ -156,15 +156,15 @@ END {
     i = 1
     while (i <= idx) {
         found = 0
-
+        
         # If line has no timestamp, print as-is and skip pattern detection
         if (timestamps[i] == "") {
             print lines[i]
             i++
             continue
         }
-
-        # First check for single line repetition (most common case, handled separately for efficiency)
+        
+        # First check for single line repetition
         if (i < idx && content[i] == content[i+1]) {
             rep_count = 1
             j = i + 1
@@ -172,9 +172,9 @@ END {
                 rep_count++
                 j++
             }
-
+            
             if (rep_count > 1) {
-                # Single line repetition - show inline suppression with all suppressed timestamps
+                # Single line repetition - show inline suppression
                 ts_list = ""
                 for (r = 1; r < rep_count; r++) {
                     if (ts_list != "") ts_list = ts_list ","
@@ -185,61 +185,60 @@ END {
                 found = 1
             }
         }
-
-        # If not single line repetition, try multi-line patterns from N down to 2.
-        # Max pattern length is half the remaining lines since we need at least 2 occurrences
-        # to justify suppression. We check largest patterns first so a long repeating block
-        # is caught as one unit rather than fragmented into smaller sub-patterns.
+        
+        # If not single line repetition, try multi-line patterns (N lines down to 2 lines)
+        # Starts with max pattern length and decreases to find largest repeating pattern
         if (!found) {
-            remaining = idx - i + 1
-            max_plen = int(remaining / 2)
-
-            for (plen = max_plen; plen >= 2 && !found; plen--) {
-                # Need at least 2 full occurrences of the pattern in remaining lines
-                if (i + plen * 2 - 1 > idx) continue
-
-                # Count how many times this pattern repeats consecutively
+            max_pattern_len = 10  # Maximum N-line pattern to detect
+            if (idx - i < max_pattern_len) max_pattern_len = idx - i
+            
+            for (plen = max_pattern_len; plen >= 2 && !found; plen--) {
+                if (i + plen > idx) continue
+                
+                # Check if pattern repeats
                 rep_count = 1
                 can_continue = 1
-
-                while (can_continue && i + plen * (rep_count + 1) - 1 <= idx) {
+                
+                while (can_continue && i + plen * (rep_count + 1) <= idx) {
                     matches = 1
                     for (k = 0; k < plen; k++) {
-                        if (content[i + k] != content[i + plen * rep_count + k] || \
-                            timestamps[i + plen * rep_count + k] == "") {
+                        if (content[i + k] != content[i + plen * rep_count + k] || timestamps[i + plen * rep_count + k] == "") {
                             matches = 0
                             break
                         }
                     }
-
+                    
                     if (matches) {
                         rep_count++
                     } else {
                         can_continue = 0
                     }
                 }
-
-                # Pattern repeated at least once - print first occurrence then suppress the rest
+                
+                # If pattern repeated at least once
                 if (rep_count > 1) {
+                    # Multi-line pattern - show pattern then suppression message
                     for (k = 0; k < plen; k++) {
                         print lines[i + k]
                     }
-
-                    # Timestamp of first line of second occurrence (start of suppressed range)
+                    
+                    # Build timestamp range for suppressed occurrences
                     ts_start = timestamps[i + plen]
-                    # Timestamp of last line of last occurrence (end of suppressed range)
                     ts_end = timestamps[i + plen * (rep_count - 1) + plen - 1]
-
-                    print "[Above " plen " lines pattern suppressed, count:" (rep_count - 1) \
-                          ", timestamps: [" ts_start "] to [" ts_end "]]"
-
+                    
+                    if (rep_count == 2) {
+                        print "[Above " plen " lines occurred immediately, pattern suppressed, count:" (rep_count - 1) ",timestamps: [" ts_start "] to[" ts_end "]]"
+                    } else {
+                        print "[Above " plen " lines occurred, pattern suppressed, count:" (rep_count - 1) ",timestamps: [" ts_start "] to[" ts_end "]]"
+                    }
+                    
                     i += plen * rep_count
                     found = 1
                 }
             }
         }
-
-        # No repetition pattern found - print line as-is and advance
+        
+        # No pattern found, print line as-is
         if (!found) {
             print lines[i]
             i++
