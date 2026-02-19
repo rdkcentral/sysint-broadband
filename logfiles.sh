@@ -246,7 +246,7 @@ log_file_update_modify_time()
     modify_time=`stat -c %Y $LOG_PATH$log_file`
     # set last modification time to the first line of the file
     if [ "$BOX_TYPE" = "SR213" ] && [ "$option" = "reboot" ]; then
-        awk 'NR==1{$0=$modify_time}1' $LOG_SYNC_PATH$log_file  > $LOG_SYNC_PATH/temp.txt;mv $LOG_SYNC_PATH/temp.txt $LOG_SYNC_PATH$log_file
+        awk 'NR==1{$0=$modify_time}1' $LOG_SYNC_PATH$log_file  > $LOG_SYNC_PATH/temp.txt;mv $LOG_SYNC_PATH/temp.txt $LOG_SYNC_PATH$log_file
     else
         sed -i "1s/.*/$modify_time/" $LOG_SYNC_PATH$log_file
     fi
@@ -265,7 +265,7 @@ log_file_update_offset()
     next_offset=`wc -l $LOG_SYNC_PATH$log_file | cut -d " " -f1`
     # set next offset to the first line of the file
     if [ "$BOX_TYPE" = "SR213" ] && [ "$option" = "reboot" ]; then
-        awk 'NR==1{$0=$next_offset}1' $LOG_SYNC_PATH$log_file  > $LOG_SYNC_PATH/temp.txt;mv $LOG_SYNC_PATH/temp.txt $LOG_SYNC_PATH$log_file
+        awk 'NR==1{$0=$next_offset}1' $LOG_SYNC_PATH$log_file  > $LOG_SYNC_PATH/temp.txt;mv $LOG_SYNC_PATH/temp.txt $LOG_SYNC_PATH$log_file
     else
         sed -i "1s/.*/$next_offset/" "$LOG_SYNC_PATH$log_file"
     fi
@@ -362,25 +362,16 @@ syncLogs_nvram2()
 {
     option=$1
 
-    # -----------------------------------------------------------------------
-    # FIX: /rdklogger is mounted read-only on RDK devices, so log_suppress.sh
-    # may not have execute permission and cannot be chmod'd in place.
-    # Solution: copy it to /tmp (always writable RAM) on every boot and set
-    # permissions there. /tmp is recreated each boot so the copy is always
-    # fresh. No manual intervention required.
-    # -----------------------------------------------------------------------
+	# RDK rootfs is read-only; always copy log_suppress.sh to /tmp for execution
     LOG_SUPPRESS_SCRIPT="$RDK_LOGGER_PATH/log_suppress.sh"
     TMP_LOG_SUPPRESS="/tmp/log_suppress.sh"
-
     if [ -f "$LOG_SUPPRESS_SCRIPT" ]; then
-        if [ ! -x "$LOG_SUPPRESS_SCRIPT" ]; then
-            echo_t "log_suppress.sh not executable (read-only fs), copying to /tmp"
+        if [ ! -f "$TMP_LOG_SUPPRESS" ] || [ "$LOG_SUPPRESS_SCRIPT" -nt "$TMP_LOG_SUPPRESS" ]; then
             cp "$LOG_SUPPRESS_SCRIPT" "$TMP_LOG_SUPPRESS"
             chmod +x "$TMP_LOG_SUPPRESS"
-            LOG_SUPPRESS_SCRIPT="$TMP_LOG_SUPPRESS"
         fi
+        LOG_SUPPRESS_SCRIPT="$TMP_LOG_SUPPRESS"
     fi
-    # -----------------------------------------------------------------------
 
     echo_t "sync logs to nvram2"
     if [ ! -d "$LOG_SYNC_PATH" ]; then
