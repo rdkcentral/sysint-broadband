@@ -29,11 +29,20 @@ BootupLog_is_updated=0
 
 JOURNAL_RUNTIME_DIR="/run/systemd/journald.conf.d"
 JOURNAL_OVERRIDE_FILE="${JOURNAL_RUNTIME_DIR}/override.conf"
+LOG_FILE="/rdklogs/logs/Consolelog.txt.0"
 
-while [ 1 ]
-do
+echo_t()
+{
+        echo "$(date +"%y%m%d-%T.%6N") $*" >> "$LOG_FILE"
+}
+
+CRON_INSTALLED_FLAG="/tmp/rdklogger_cron_installed"
+
+
+do_journal_iteration() {
    uptime_in_secs=$(cut -d. -f1 /proc/uptime)
    if [ "$uptime_in_secs" -ge 1800 ] && [ ! -f "$JOURNAL_OVERRIDE_FILE" ]; then
+       echo_t "Applying journald runtime override"
        mkdir -p "$JOURNAL_RUNTIME_DIR"
        cat > "$JOURNAL_OVERRIDE_FILE" <<'EOF'
 [Journal]
@@ -41,7 +50,17 @@ RuntimeMaxUse=8M
 RuntimeMaxFileSize=4M
 RuntimeMaxFiles=2
 EOF
-       systemctl restart systemd-journald 2>/dev/null || true
+       if [ $? -ne 0 ]; then
+           echo_t "ERROR: Failed to create journald override file"
+       fi
+       systemctl restart systemd-journald >/dev/null 2>&1
+       rc=$?
+
+       if [ $rc -ne 0 ]; then
+           echo_t "ERROR: systemd-journald restart failed, rc=$rc"
+       else
+           echo_t "journald runtime threshold set to 8MB successfully"
+       fi
    fi
    current_time=$(date +%s)
    if [ -f "$lastdmesgsync" ];then
@@ -62,13 +81,77 @@ EOF
                 BootupLog_is_updated=1;
            fi
    fi
-   # ARRISXB6-8252   sleep for 60 sec until we populate journalctl
-   if [ "$BOX_TYPE" = "XB6" -a "$MANUFACTURE" = "Arris" ];then
-     dmesgsyncinterval=60
-   else
-     dmesgsyncinterval=`syscfg get dmesglogsync_interval`
-   fi
+}
 
-   sleep $dmesgsyncinterval 
- 
-done
+install_cron_entry() {
+    if [ "$BOX_TYPE" = "XB6" -a "$MANUFACTURE" = "Arris" ]; then
+        dmesgsyncinterval_sec=60
+        cron="* * * * *"
+    else
+        dmesgsyncinterval_sec="$(syscfg get dmesglogsync_interval)"
+        case "$dmesgsyncinterval_sec" in
+            "60")   cron="* * * * *" ;;
+            "300")  cron="*/5 * * * *" ;;
+            "600")  cron="*/10 * * * *" ;;
+            "900")  cron="*/15 * * * *" ;;
+            "3600") cron="0 * * * *" ;;
+            *)    cron="*/15 * * * *" ;;
+        esac
+    fi
+
+	CRON_LINE="$cron /rdklogger/update_journal_log.sh start"
+    
+    if crontab -l 2>/dev/null | grep -q "update_journal_log.sh"; then
+        echo_t "update_journal_log.sh - Cron entry already present"
+        return 0
+    fi
+
+    (crontab -l 2>/dev/null; echo "$CRON_LINE") | crontab -
+    rc=$?
+    
+    if [ $rc -eq 0 ]; then
+        echo_t "update_journal_log.sh - Cron installed cleanly: $CRON_LINE"
+    else
+        echo_t "update_journal_log.sh - Cron install failed (rc=$rc)"
+    fi
+}
+
+service_mode() {
+    echo_t "update_journal_log.sh - Running in SERVICE mode"
+
+    while [ 1 ];
+    do
+        do_journal_iteration
+        # ARRISXB6-8252   sleep for 60 sec until we populate journalctl
+        if [ "$BOX_TYPE" = "XB6" -a "$MANUFACTURE" = "Arris" ];then
+           dmesgsyncinterval=60
+        else
+           dmesgsyncinterval=`syscfg get dmesglogsync_interval`
+        fi
+
+       sleep $dmesgsyncinterval
+
+    done
+}
+
+rdklogger_cron_enable=`syscfg get RdkbLogCronEnable`
+if [ "$rdklogger_cron_enable" = "true" ]; then
+    echo_t "update_journal_log.sh - Running in CRON mode"
+	
+    if [ ! -f "$CRON_INSTALLED_FLAG" ]; then
+        install_cron_entry
+        touch "$CRON_INSTALLED_FLAG"
+	    do_journal_iteration
+		
+		if [ -f /lib/systemd/system/log_journalmsg.service ]; then
+            echo_t "Disabling log_journalmsg.service for cron mode"
+            systemctl stop log_journalmsg.service
+        fi
+        exit 0
+    else
+        do_journal_iteration
+        exit 0
+    fi
+else
+    service_mode
+fi
