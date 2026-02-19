@@ -408,10 +408,10 @@ syncLogs_nvram2()
 
     log_files_sync_to_nvram2 $option
 
-    # Suppress repeated logs in nvram2 before backup/upload
-    if [ -f /lib/rdk/log_suppress.sh ]; then
+    # Suppress repeated logs after syncing to nvram2
+    if [ -f $RDK_LOGGER_PATH/log_suppress.sh ]; then
         echo_t "Analysing and suppressing repeated logs in nvram2"
-        sh /lib/rdk/log_suppress.sh $LOG_SYNC_PATH
+        sh $RDK_LOGGER_PATH/log_suppress.sh $LOG_SYNC_PATH
     fi
 
     if [ -f /tmp/backup_onboardlogs ]; then
@@ -675,12 +675,7 @@ backupnvram2logs()
         	sed -i "s/.*passphrase.*/\toption passphrase \'\'/g" $LOG_SYNC_PATH$WIRELESS_CFG_FILE
         fi
 
-	# Suppress repeated logs before creating tar archive
-	if [ -f /lib/rdk/log_suppress.sh ]; then
-		echo_t "Analysing and suppressing repeated logs before tar creation"
-		sh /lib/rdk/log_suppress.sh $LOG_SYNC_PATH
-	fi
-
+	# Note: Logs are already suppressed during syncLogs_nvram2()
 	echo "*.tgz" > $PATTERN_FILE # .tgz should be excluded while tar
 	wan_event=`sysevent get wan_event_log_upload`
         if [ -f "/tmp/.uploadregularlogs" ] || [ "$wan_event" == "yes" ]
@@ -789,12 +784,7 @@ backupnvram2logs_on_reboot()
        		sed -i "s/.*passphrase.*/\toption passphrase \'\'/g" $TarFolder$WIRELESS_CFG_FILE
         fi
 
-	# Suppress repeated logs before creating tar archive on reboot
-	if [ -f /lib/rdk/log_suppress.sh ]; then
-		echo_t "Analysing and suppressing repeated logs before tar creation (reboot)"
-		sh /lib/rdk/log_suppress.sh $TarFolder
-	fi
-
+	# Note: Logs are already suppressed during syncLogs_nvram2()
 	echo "*.tgz" > $PATTERN_FILE # .tgz should be excluded while tar
 	if [ -f /tmp/backup_onboardlogs ] && [ -f /nvram/.device_onboarded ]; then
 	    echo "tar activation logs from backupnvram2logs_on_reboot"
@@ -1224,4 +1214,3 @@ copy_onboardlogs()
     cd $curDir
     echo_t "done onboardlogs copy to $1"
 }
-
