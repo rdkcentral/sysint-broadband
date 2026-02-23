@@ -29,11 +29,18 @@ BootupLog_is_updated=0
 
 JOURNAL_RUNTIME_DIR="/run/systemd/journald.conf.d"
 JOURNAL_OVERRIDE_FILE="${JOURNAL_RUNTIME_DIR}/override.conf"
+LOG_FILE="/rdklogs/logs/Consolelog.txt.0"
+
+echo_t()
+{
+        echo "$(date +"%y%m%d-%T.%6N") $*" >> "$LOG_FILE"
+}
 
 while [ 1 ]
 do
    uptime_in_secs=$(cut -d. -f1 /proc/uptime)
    if [ "$uptime_in_secs" -ge 1800 ] && [ ! -f "$JOURNAL_OVERRIDE_FILE" ]; then
+       echo_t "Applying journald runtime override"
        mkdir -p "$JOURNAL_RUNTIME_DIR"
        cat > "$JOURNAL_OVERRIDE_FILE" <<'EOF'
 [Journal]
@@ -41,7 +48,17 @@ RuntimeMaxUse=8M
 RuntimeMaxFileSize=4M
 RuntimeMaxFiles=2
 EOF
-       systemctl restart systemd-journald 2>/dev/null || true
+       if [ $? -ne 0 ]; then
+           echo_t "ERROR: Failed to create journald override file"
+       fi
+       systemctl restart systemd-journald >/dev/null 2>&1
+       rc=$?
+
+       if [ $rc -ne 0 ]; then
+           echo_t "ERROR: systemd-journald restart failed, rc=$rc"
+       else
+           echo_t "journald runtime threshold set to 8MB successfully"
+       fi
    fi
    current_time=$(date +%s)
    if [ -f "$lastdmesgsync" ];then
