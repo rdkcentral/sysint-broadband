@@ -80,6 +80,386 @@ else
 SYSCFG_DB_FILE="/opt/secure/data/syscfg.db"
 fi
 
+# ---------------------------------------------------------------------------
+# Log Suppression — Incremental, fully inlined
+#
+# Offsets are stored in $LOG_SYNC_PATH/.log_suppress_offsets/<filename>.offset
+# Each offset file holds the number of lines already suppressed for that log.
+# On each syncLogs_nvram2() call only NEW lines (beyond saved offset) are
+# suppressed and appended to the existing nvram2 file, so already-suppressed
+# content is never re-processed.
+#
+# Offset files are automatically removed in the same cleanup sweeps that
+# remove the log files themselves (backupnvram2logs / backupnvram2logs_on_reboot).
+# ---------------------------------------------------------------------------
+
+# Sub-directory inside LOG_SYNC_PATH that holds per-file offset markers.
+# Defined as a variable so the cleanup functions can reference it.
+LOG_SUPPRESS_OFFSET_DIR="$LOG_SYNC_PATH/.log_suppress_offsets"
+
+# ---------------------------------------------------------------------------
+# _suppress_get_offset <offset_file>
+#   Echo the saved line-count offset; echoes 0 when file does not exist yet.
+# ---------------------------------------------------------------------------
+_suppress_get_offset()
+{
+    local offset_file="$1"
+    if [ -f "$offset_file" ]; then
+        cat "$offset_file" 2>/dev/null || echo 0
+    else
+        echo 0
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# _suppress_set_offset <offset_file> <value>
+#   Persist the new processed-line count for a log file.
+# ---------------------------------------------------------------------------
+_suppress_set_offset()
+{
+    local offset_file="$1"
+    local value="$2"
+    echo "$value" > "$offset_file"
+}
+
+# ---------------------------------------------------------------------------
+# _suppress_run_awk <input_file> <output_file> <append_mode>
+#
+#   Core awk suppression engine — detects single-line and multi-line
+#   repeating patterns and emits suppression annotations.
+#
+#   <append_mode>  0 = overwrite output_file
+#                  1 = append to output_file
+# ---------------------------------------------------------------------------
+_suppress_run_awk()
+{
+    local INPUT_FILE="$1"
+    local OUTPUT_FILE="$2"
+    local APPEND_MODE="${3:-0}"
+    local TEMP_FILE="${OUTPUT_FILE}.suppress.tmp"
+
+    awk '
+BEGIN { idx = 0 }
+
+{
+    if (length($0) == 0 || $0 ~ /^[[:space:]]*$/) { next }
+
+    idx++
+    lines[idx] = $0
+    timestamp = ""
+    message   = ""
+
+    # ---- timestamp extraction (all supported formats) ----
+    # YYMMDD-HH:MM:SS.microseconds
+    if (match($0, /^[0-9]{6}-[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6} /)) {
+        timestamp = substr($0, 1, RLENGTH);  message = substr($0, RLENGTH+1)
+    }
+    # YYYY-MM-DD-HH:MM:SS… or generic dash-separated
+    else if (match($0, /^[0-9-]+-[0-9:.]+ /)) {
+        timestamp = substr($0, 1, RLENGTH);  message = substr($0, RLENGTH+1)
+    }
+    # YYYY MMM DD HH:MM:SS
+    else if (match($0, /^[0-9]{4} [A-Za-z]{3} [0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} /)) {
+        timestamp = substr($0, 1, RLENGTH);  message = substr($0, RLENGTH+1)
+    }
+    # [Mon Jan 15 10:30:45 2024]
+    else if (match($0, /^\[[A-Za-z]{3} [A-Za-z]{3} [0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} [0-9]{4}\] /)) {
+        timestamp = substr($0, 2, RLENGTH-2);  message = substr($0, RLENGTH+2)
+    }
+    # Monday, Jan 15 10:30:45 2024:
+    else if (match($0, /^[A-Za-z]+, [A-Za-z]{3} [0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} [0-9]{4}:/)) {
+        timestamp = substr($0, 1, RLENGTH-1);  message = substr($0, RLENGTH+1)
+    }
+    # YYYYMMDD HHMMSS.microseconds
+    else if (match($0, /^[0-9]{8} [0-9]{6}\.[0-9]{6} /)) {
+        timestamp = substr($0, 1, RLENGTH);  message = substr($0, RLENGTH+1)
+    }
+    # Mon Jan 15 10:30:45 [TZ] YYYY
+    else if (match($0, /^[A-Za-z]{3} [A-Za-z]{3} [0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} [A-Za-z]{3} [0-9]{4} /) ||
+             match($0, /^[A-Za-z]{3} [A-Za-z]{3} [0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} [0-9]{4} /)) {
+        timestamp = substr($0, 1, RLENGTH);  message = substr($0, RLENGTH+1)
+    }
+    # [OneWifi] YYMMDD-HH:MM:SS.microseconds<I/E>
+    else if (match($0, /^\[OneWifi\] [0-9]{6}-[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}<[IE]> /)) {
+        timestamp = substr($0, 11, 17);  message = substr($0, 30)
+    }
+    # YYYY.MM.DD HH:MM:SS
+    else if (match($0, /^[0-9]{4}\.[0-9]{2}\.[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} /)) {
+        timestamp = substr($0, 1, 19);  message = substr($0, 21)
+    }
+    # [HH:MM:SS DD/MM/YYYY]
+    else if (match($0, /^\[([0-9]{2}:[0-9]{2}:[0-9]{2}) ([0-9]{2}\/[0-9]{2}\/[0-9]{4})\] /)) {
+        timestamp = substr($0, 2, RLENGTH-3);  message = substr($0, RLENGTH+2)
+    }
+    # YYYY-MM-DD HH:MM:SS.microseconds
+    else if (match($0, /^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6} /)) {
+        timestamp = substr($0, 1, RLENGTH);  message = substr($0, RLENGTH+1)
+    }
+    # YYYY-MM-DDTHH:MM:SS…Z: (ISO)
+    else if (match($0, /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z[[:space:]]*:/)) {
+        timestamp = substr($0, 1, RLENGTH);  message = substr($0, RLENGTH+1)
+    }
+    # No timestamp recognised
+    else {
+        timestamp = "";  message = $0
+    }
+
+    timestamps[idx] = timestamp
+    content[idx]    = message
+    gsub(/^[ \t]+/, "", content[idx])
+}
+
+END {
+    i = 1
+    while (i <= idx) {
+        found = 0
+
+        # Lines without a timestamp are printed verbatim
+        if (timestamps[i] == "") {
+            print lines[i];  i++;  continue
+        }
+
+        # ---- Single-line repetition check ----
+        if (i < idx && content[i] == content[i+1]) {
+            rep_count = 1;  j = i+1
+            while (j <= idx && content[i] == content[j] && timestamps[j] != "") {
+                rep_count++;  j++
+            }
+            if (rep_count > 1) {
+                ts_list = ""
+                for (r = 1; r < rep_count; r++) {
+                    if (ts_list != "") ts_list = ts_list ","
+                    ts_list = ts_list "<" timestamps[i+r] ">"
+                }
+                print lines[i] " [suppressed count: " (rep_count-1) ", timestamps: " ts_list "]"
+                i += rep_count;  found = 1
+            }
+        }
+
+        # ---- Multi-line pattern check (2..max_pattern_len lines) ----
+        if (!found) {
+            max_pattern_len = 10
+            if (idx - i < max_pattern_len) max_pattern_len = idx - i
+
+            for (plen = 2; plen <= max_pattern_len && !found; plen++) {
+                if (i + plen > idx) continue
+                rep_count = 1;  can_continue = 1
+
+                while (can_continue && i + plen*(rep_count+1) <= idx) {
+                    matches = 1
+                    for (k = 0; k < plen; k++) {
+                        if (content[i+k] != content[i+plen*rep_count+k] ||
+                            timestamps[i+plen*rep_count+k] == "") {
+                            matches = 0;  break
+                        }
+                    }
+                    if (matches) rep_count++
+                    else         can_continue = 0
+                }
+
+                if (rep_count > 1) {
+                    for (k = 0; k < plen; k++) print lines[i+k]
+                    ts_start = timestamps[i+plen]
+                    ts_end   = timestamps[i+plen*(rep_count-1)+plen-1]
+                    if (rep_count == 2)
+                        print "[Above " plen " lines occurred immediately, pattern suppressed, count:" (rep_count-1) ",timestamps: [" ts_start "] to[" ts_end "]]"
+                    else
+                        print "[Above " plen " lines occurred, pattern suppressed, count:" (rep_count-1) ",timestamps: [" ts_start "] to[" ts_end "]]"
+                    i += plen * rep_count;  found = 1
+                }
+            }
+        }
+
+        if (!found) { print lines[i];  i++ }
+    }
+}
+' "$INPUT_FILE" > "$TEMP_FILE"
+
+    if [ -f "$TEMP_FILE" ]; then
+        if [ "$APPEND_MODE" -eq 1 ]; then
+            cat "$TEMP_FILE" >> "$OUTPUT_FILE"
+            rm -f "$TEMP_FILE"
+        else
+            mv "$TEMP_FILE" "$OUTPUT_FILE"
+        fi
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# _suppress_file_incremental <log_file>
+#
+#   Incremental in-place suppression for a single nvram2 log file.
+#
+#   How it works
+#   ────────────
+#   nvram2 files are append-only accumulation files built by
+#   log_file_append_logs().  On each syncLogs_nvram2() call new lines are
+#   appended AFTER the previously suppressed content that is already there.
+#
+#   The offset stored in the .offset file is the line count of the file
+#   as it was at the END of the last suppression pass.  On the next call:
+#
+#     1. total_lines  = current wc -l of the nvram2 file
+#     2. new_lines    = total_lines - prev_offset
+#     3. If new_lines <= 0 → nothing to do, return immediately.
+#     4. Slice the new tail into a temp file.
+#     5. Suppress the slice; append result back onto the nvram2 file,
+#        replacing the raw tail that was just added by log_file_append_logs.
+#        (We truncate the file back to prev_offset lines first, then append
+#         the suppressed version of the new content.)
+#     6. Update the offset to the new line count of the nvram2 file.
+# ---------------------------------------------------------------------------
+_suppress_file_incremental()
+{
+    local LOG_FILE="$1"
+    local FILENAME
+    FILENAME=$(basename "$LOG_FILE")
+    local OFFSET_FILE="$LOG_SUPPRESS_OFFSET_DIR/${FILENAME}.offset"
+
+    # Ensure the offset directory exists
+    mkdir -p "$LOG_SUPPRESS_OFFSET_DIR"
+
+    local prev_offset
+    prev_offset=$(_suppress_get_offset "$OFFSET_FILE")
+
+    local total_lines
+    total_lines=$(wc -l < "$LOG_FILE" 2>/dev/null)
+    total_lines=${total_lines:-0}
+
+    # Nothing new since last pass
+    if [ "$total_lines" -le "$prev_offset" ]; then
+        return 0
+    fi
+
+    local new_lines=$(( total_lines - prev_offset ))
+    echo_t "  [suppress] $FILENAME: $prev_offset lines already processed, $new_lines new line(s)"
+
+    local SLICE_FILE="${LOG_FILE}.suppress_slice.tmp"
+    local SUPPRESSED_FILE="${LOG_FILE}.suppress_out.tmp"
+
+    # Extract only the newly appended lines
+    tail -n +"$(( prev_offset + 1 ))" "$LOG_FILE" > "$SLICE_FILE"
+
+    # Suppress the slice
+    _suppress_run_awk "$SLICE_FILE" "$SUPPRESSED_FILE" 0
+    rm -f "$SLICE_FILE"
+
+    if [ ! -f "$SUPPRESSED_FILE" ]; then
+        # awk produced no output — nothing to merge
+        return 0
+    fi
+
+    if [ "$prev_offset" -eq 0 ]; then
+        # First pass: the whole file is new — replace it entirely
+        mv "$SUPPRESSED_FILE" "$LOG_FILE"
+    else
+        # Subsequent pass: keep the already-suppressed head, replace the raw tail
+        # Truncate file back to the previously processed line count, then append
+        # the suppressed version of the new lines.
+        local HEAD_FILE="${LOG_FILE}.suppress_head.tmp"
+        head -n "$prev_offset" "$LOG_FILE" > "$HEAD_FILE"
+        cat "$HEAD_FILE" "$SUPPRESSED_FILE" > "$LOG_FILE"
+        rm -f "$HEAD_FILE" "$SUPPRESSED_FILE"
+    fi
+
+    # Record the new line count of the (now suppressed) file as next offset
+    local new_offset
+    new_offset=$(wc -l < "$LOG_FILE" 2>/dev/null)
+    new_offset=${new_offset:-0}
+    _suppress_set_offset "$OFFSET_FILE" "$new_offset"
+}
+
+# ---------------------------------------------------------------------------
+# suppress_logs_incremental <directory>
+#
+#   Iterates all log files in <directory>, skips binaries/archives and
+#   pure numeric offset-marker files, and calls _suppress_file_incremental()
+#   on each eligible file.  Reports before/after sizes via echo_t.
+# ---------------------------------------------------------------------------
+suppress_logs_incremental()
+{
+    local dir="$1"
+    local processed=0
+    local total=0
+    local size_before size_after size_diff percent_reduced
+
+    size_before=$(du -sk "$dir" 2>/dev/null | awk '{print $1}')
+    size_before=${size_before:-0}
+
+    for file in "$dir"/*; do
+        [ -f "$file" ] && total=$(( total + 1 ))
+    done
+
+    echo_t "Starting incremental log suppression: $total file(s) in $dir"
+    echo_t "Size before suppression: ${size_before} KB"
+
+    for file in "$dir"/*; do
+        [ -f "$file" ] || continue
+
+        # Skip binary/archive/temp files
+        case "$file" in
+            *.tgz|*.tar|*.gz|*.bin|*.core|*.suppress_slice.tmp|*.suppress_out.tmp|*.suppress_head.tmp)
+                continue ;;
+        esac
+
+        # Skip pure numeric offset-marker files (first line is a number, ≤2 lines total)
+        first_line=$(head -n 1 "$file" 2>/dev/null)
+        line_count=$(wc -l < "$file" 2>/dev/null)
+        if echo "$first_line" | grep -q "^[0-9]*$" && [ "${line_count:-0}" -le 2 ]; then
+            continue
+        fi
+
+        _suppress_file_incremental "$file"
+        processed=$(( processed + 1 ))
+    done
+
+    # Exclude the offset sub-directory from the after-size measurement
+    size_after=$(du -sk --exclude=".log_suppress_offsets" "$dir" 2>/dev/null | awk '{print $1}')
+    if [ -z "$size_after" ]; then
+        # Fallback for busybox du (no --exclude support)
+        local offset_size
+        offset_size=$(du -sk "$LOG_SUPPRESS_OFFSET_DIR" 2>/dev/null | awk '{print $1}')
+        size_after=$(du -sk "$dir" 2>/dev/null | awk '{print $1}')
+        size_after=$(( ${size_after:-0} - ${offset_size:-0} ))
+    fi
+    [ "${size_after:-0}" -lt 0 ] && size_after=0
+
+    size_diff=$(( size_before - size_after ))
+    if [ "$size_before" -gt 0 ]; then
+        percent_reduced=$(( size_diff * 100 / size_before ))
+    else
+        percent_reduced=0
+    fi
+
+    echo_t "Incremental suppression done: $processed/$total files processed"
+    echo_t "Size after suppression: ${size_after} KB"
+    echo_t "Size reduced: ${size_diff} KB (${percent_reduced}% reduction)"
+}
+
+# ---------------------------------------------------------------------------
+# suppress_cleanup_offsets <log_sync_path>
+#
+#   Remove offset files whose corresponding log file no longer exists in
+#   <log_sync_path>.  Called after the post-upload cleanup sweeps so stale
+#   offsets from deleted logs do not accumulate across reboot cycles.
+# ---------------------------------------------------------------------------
+suppress_cleanup_offsets()
+{
+    local log_dir="$1"
+    local offset_dir="${log_dir}/.log_suppress_offsets"
+
+    [ -d "$offset_dir" ] || return 0
+
+    for offset_file in "$offset_dir"/*.offset; do
+        [ -f "$offset_file" ] || continue
+        local base
+        base=$(basename "$offset_file" .offset)
+        if [ ! -f "${log_dir}/${base}" ]; then
+            rm -f "$offset_file"
+        fi
+    done
+}
+
 moveFile()
 {        
      if [[ -f "$1" ]]; then mv $1 $2; fi
@@ -358,297 +738,6 @@ log_files_sync_to_nvram2()
     done
 }
 
-# ---------------------------------------------------------------------------
-# suppress_log_file_inline()
-# Inlined equivalent of suppress_log_file() from log_suppress.sh.
-# Operates in-place on a single file using a .suppress.tmp swap file.
-# Detects single-line repetitions and multi-line repeating patterns
-# (up to max_pattern_len=10 lines) and emits suppression annotations.
-# No dependency on /rdklogger/log_suppress.sh — avoids Permission Denied
-# errors on read-only RDK rootfs mounts.
-# ---------------------------------------------------------------------------
-suppress_log_file_inline()
-{
-    local INPUT_FILE="$1"
-    local TEMP_FILE="${INPUT_FILE}.suppress.tmp"
-
-    awk '
-BEGIN {
-    idx = 0
-}
-
-{
-    # Skip empty lines
-    if (length($0) == 0 || $0 ~ /^[[:space:]]*$/) {
-        next
-    }
-
-    idx++
-    lines[idx] = $0
-    has_timestamp = 0
-    timestamp = ""
-    message = ""
-
-    # Try to extract timestamp - supports multiple formats
-    # Format: YYMMDD-HH:MM:SS.microseconds (6 digits for date)
-    if (match($0, /^[0-9]{6}-[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6} /)) {
-        timestamp = substr($0, 1, RLENGTH)
-        message = substr($0, RLENGTH + 1)
-        has_timestamp = 1
-    }
-    # Format: YYYY-MM-DD-HH:MM:SS.microseconds or similar dash-separated
-    else if (match($0, /^[0-9-]+-[0-9:.]+ /)) {
-        timestamp = substr($0, 1, RLENGTH)
-        message = substr($0, RLENGTH + 1)
-        has_timestamp = 1
-    }
-    # Format: YYYY MMM DD HH:MM:SS (e.g., 2024 Jan 15 10:30:45)
-    else if (match($0, /^[0-9]{4} [A-Za-z]{3} [0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} /)) {
-        timestamp = substr($0, 1, RLENGTH)
-        message = substr($0, RLENGTH + 1)
-        has_timestamp = 1
-    }
-    # Format: [Day Mon DD HH:MM:SS YYYY] (e.g., [Mon Jan 15 10:30:45 2024])
-    else if (match($0, /^\[[A-Za-z]{3} [A-Za-z]{3} [0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} [0-9]{4}\] /)) {
-        timestamp = substr($0, 2, RLENGTH - 2)
-        message = substr($0, RLENGTH + 2)
-        has_timestamp = 1
-    }
-    # Format: Day, Mon DD HH:MM:SS YYYY: (e.g., Monday, Jan 15 10:30:45 2024:)
-    else if (match($0, /^[A-Za-z]+, [A-Za-z]{3} [0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} [0-9]{4}:/)) {
-        timestamp = substr($0, 1, RLENGTH - 1)
-        message = substr($0, RLENGTH + 1)
-        has_timestamp = 1
-    }
-    # Format: YYYYMMDD HHMMSS.microseconds (e.g., 20240115 103045.123456)
-    else if (match($0, /^[0-9]{8} [0-9]{6}\.[0-9]{6} /)) {
-        timestamp = substr($0, 1, RLENGTH)
-        message = substr($0, RLENGTH + 1)
-        has_timestamp = 1
-    }
-    # Format: Day Mon DD HH:MM:SS TZ YYYY or Day Mon DD HH:MM:SS YYYY
-    else if (match($0, /^[A-Za-z]{3} [A-Za-z]{3} [0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} [A-Za-z]{3} [0-9]{4} /) || match($0, /^[A-Za-z]{3} [A-Za-z]{3} [0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} [0-9]{4} /)) {
-        timestamp = substr($0, 1, RLENGTH)
-        message = substr($0, RLENGTH + 1)
-        has_timestamp = 1
-    }
-    # Format: [OneWifi] YYMMDD-HH:MM:SS.microseconds<I/E>
-    else if (match($0, /^\[OneWifi\] [0-9]{6}-[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}<[IE]> /)) {
-        timestamp = substr($0, 11, 17)
-        message = substr($0, 30)
-        has_timestamp = 1
-    }
-    # Format: YYYY.MM.DD HH:MM:SS (e.g., 2024.01.15 10:30:45)
-    else if (match($0, /^[0-9]{4}\.[0-9]{2}\.[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} /)) {
-        timestamp = substr($0, 1, 19)
-        message = substr($0, 21)
-        has_timestamp = 1
-    }
-    # Format: [HH:MM:SS DD/MM/YYYY] (time and date in brackets)
-    else if (match($0, /^\[([0-9]{2}:[0-9]{2}:[0-9]{2}) ([0-9]{2}\/[0-9]{2}\/[0-9]{4})\] /)) {
-        timestamp = substr($0, 2, RLENGTH - 3)
-        message = substr($0, RLENGTH + 2)
-        has_timestamp = 1
-    }
-    # Format: YYYY-MM-DD HH:MM:SS.microseconds (standard datetime)
-    else if (match($0, /^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6} /)) {
-        timestamp = substr($0, 1, RLENGTH)
-        message = substr($0, RLENGTH + 1)
-        has_timestamp = 1
-    }
-    # Format: YYYY-MM-DDTHH:MM:SS.microsecondsZ: (ISO format)
-    else if (match($0, /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z[[:space:]]*:/)) {
-        timestamp = substr($0, 1, RLENGTH)
-        message = substr($0, RLENGTH + 1)
-        has_timestamp = 1
-    }
-    # No timestamp found - treat entire line as message
-    else {
-        has_timestamp = 0
-        timestamp = ""
-        message = $0
-    }
-
-    timestamps[idx] = timestamp
-    content[idx] = message
-    gsub(/^[ \t]+/, "", content[idx])
-}
-
-END {
-    i = 1
-    while (i <= idx) {
-        found = 0
-
-        # If line has no timestamp, print as-is and skip pattern detection
-        if (timestamps[i] == "") {
-            print lines[i]
-            i++
-            continue
-        }
-
-        # First check for single line repetition
-        if (i < idx && content[i] == content[i+1]) {
-            rep_count = 1
-            j = i + 1
-            while (j <= idx && content[i] == content[j] && timestamps[j] != "") {
-                rep_count++
-                j++
-            }
-
-            if (rep_count > 1) {
-                # Single line repetition - show inline suppression
-                ts_list = ""
-                for (r = 1; r < rep_count; r++) {
-                    if (ts_list != "") ts_list = ts_list ","
-                    ts_list = ts_list "<" timestamps[i + r] ">"
-                }
-                print lines[i] " [suppressed count: " (rep_count - 1) ", timestamps: " ts_list "]"
-                i += rep_count
-                found = 1
-            }
-        }
-
-        # If not single line repetition, try multi-line patterns (N lines down to 2 lines)
-        # Starts with max pattern length and decreases to find largest repeating pattern
-        if (!found) {
-            max_pattern_len = 10  # Maximum N-line pattern to detect
-            if (idx - i < max_pattern_len) max_pattern_len = idx - i
-
-            for (plen = max_pattern_len; plen >= 2 && !found; plen--) {
-                if (i + plen > idx) continue
-
-                # Check if pattern repeats
-                rep_count = 1
-                can_continue = 1
-
-                while (can_continue && i + plen * (rep_count + 1) <= idx) {
-                    matches = 1
-                    for (k = 0; k < plen; k++) {
-                        if (content[i + k] != content[i + plen * rep_count + k] || timestamps[i + plen * rep_count + k] == "") {
-                            matches = 0
-                            break
-                        }
-                    }
-
-                    if (matches) {
-                        rep_count++
-                    } else {
-                        can_continue = 0
-                    }
-                }
-
-                # If pattern repeated at least once
-                if (rep_count > 1) {
-                    # Multi-line pattern - show pattern then suppression message
-                    for (k = 0; k < plen; k++) {
-                        print lines[i + k]
-                    }
-
-                    # Build timestamp range for suppressed occurrences
-                    ts_start = timestamps[i + plen]
-                    ts_end = timestamps[i + plen * (rep_count - 1) + plen - 1]
-
-                    if (rep_count == 2) {
-                        print "[Above " plen " lines occurred immediately, pattern suppressed, count:" (rep_count - 1) ",timestamps: [" ts_start "] to[" ts_end "]]"
-                    } else {
-                        print "[Above " plen " lines occurred, pattern suppressed, count:" (rep_count - 1) ",timestamps: [" ts_start "] to[" ts_end "]]"
-                    }
-
-                    i += plen * rep_count
-                    found = 1
-                }
-            }
-        }
-
-        # No pattern found, print line as-is
-        if (!found) {
-            print lines[i]
-            i++
-        }
-    }
-}
-' "$INPUT_FILE" > "$TEMP_FILE"
-
-    # Move temp file to output location
-    if [ -f "$TEMP_FILE" ]; then
-        mv "$TEMP_FILE" "$INPUT_FILE"
-    fi
-}
-
-# ---------------------------------------------------------------------------
-# suppress_logs_inline()
-# Inlined equivalent of suppress_logs_in_directory() from log_suppress.sh.
-# Iterates all files in the given directory, skips binaries/archives and
-# pure offset-marker files, calls suppress_log_file_inline() on each,
-# and logs before/after size statistics via echo_t.
-# ---------------------------------------------------------------------------
-suppress_logs_inline()
-{
-    local dir="$1"
-    local processed=0
-    local total=0
-    local size_before=0
-    local size_after=0
-
-    # Calculate total size before suppression
-    size_before=$(du -sk "$dir" 2>/dev/null | awk '{print $1}')
-    if [ -z "$size_before" ]; then
-        size_before=0
-    fi
-
-    # Count total files
-    for file in "$dir"/*; do
-        if [ -f "$file" ]; then
-            total=$((total + 1))
-        fi
-    done
-
-    echo_t "Starting log suppression: Processing $total file(s) from $dir"
-    echo_t "Size before suppression: ${size_before} KB"
-
-    for file in "$dir"/*; do
-        # Skip if not a regular file
-        if [ ! -f "$file" ]; then
-            continue
-        fi
-
-        # Skip tar files and other binary files
-        case "$file" in
-            *.tgz|*.tar|*.gz|*.bin|*.core|*.suppress.tmp)
-                continue
-                ;;
-        esac
-
-        # Skip files that are just offset markers (first line is just a number)
-        first_line=$(head -n 1 "$file" 2>/dev/null)
-        line_count=$(wc -l < "$file" 2>/dev/null)
-        if echo "$first_line" | grep -q "^[0-9]*$" && [ "$line_count" -le 2 ]; then
-            continue
-        fi
-
-        suppress_log_file_inline "$file"
-        processed=$((processed + 1))
-    done
-
-    # Calculate total size after suppression
-    size_after=$(du -sk "$dir" 2>/dev/null | awk '{print $1}')
-    if [ -z "$size_after" ]; then
-        size_after=0
-    fi
-
-    # Calculate size difference
-    size_diff=$((size_before - size_after))
-    if [ "$size_before" -gt 0 ]; then
-        percent_reduced=$((size_diff * 100 / size_before))
-    else
-        percent_reduced=0
-    fi
-
-    echo_t "Log suppression completed: Processed $processed/$total files"
-    echo_t "Size after suppression: ${size_after} KB"
-    echo_t "Size reduced: ${size_diff} KB (${percent_reduced}% reduction)"
-}
-
 syncLogs_nvram2()
 {
     option=$1
@@ -699,11 +788,12 @@ syncLogs_nvram2()
 
     log_files_sync_to_nvram2 $option
 
-    # Suppress repeated logs after syncing to nvram2.
-    # Uses fully inlined suppress functions — no dependency on external
-    # /rdklogger/log_suppress.sh, which may be inaccessible on read-only rootfs.
-    echo_t "Analysing and suppressing repeated logs in nvram2"
-    suppress_logs_inline $LOG_SYNC_PATH
+    # Incrementally suppress repeated log patterns in nvram2.
+    # Only lines newly appended since the last sync cycle are processed —
+    # already-suppressed content is never re-read or re-written.
+    # Offset state is stored in $LOG_SYNC_PATH/.log_suppress_offsets/
+    echo_t "Analysing and suppressing repeated logs in nvram2 (incremental)"
+    suppress_logs_incremental $LOG_SYNC_PATH
 
     if [ -f /tmp/backup_onboardlogs ]; then
         backup_onboarding_logs
@@ -966,7 +1056,7 @@ backupnvram2logs()
         	sed -i "s/.*passphrase.*/\toption passphrase \'\'/g" $LOG_SYNC_PATH$WIRELESS_CFG_FILE
         fi
 
-	# Note: Logs are already suppressed during syncLogs_nvram2()
+	# Note: Logs are already suppressed incrementally during syncLogs_nvram2()
 	echo "*.tgz" > $PATTERN_FILE # .tgz should be excluded while tar
 	wan_event=`sysevent get wan_event_log_upload`
         if [ -f "/tmp/.uploadregularlogs" ] || [ "$wan_event" == "yes" ]
@@ -998,6 +1088,9 @@ backupnvram2logs()
 		rm -rf $LOG_SYNC_PATH$BBHM_CFG_FILE
 		rm -rf $LOG_SYNC_PATH$WIRELESS_CFG_FILE
 	fi
+
+	# Clean up offset files for any log files that were just deleted above
+	suppress_cleanup_offsets "$LOG_SYNC_PATH"
 
 	cd $LOG_PATH
 	FILES=`ls`
@@ -1053,15 +1146,6 @@ backupnvram2logs_on_reboot()
 		TarFolder=$TMP_UPLOAD
 	fi
 
-#	if [ ! -d "$destn" ]; then
-#	   mkdir -p $destn
-#	else
-#	   FILE_EXISTS=`ls $destn`
-#	   if [ "$FILE_EXISTS" != "" ]; then
-#          	rm -rf $destn*.tgz
-#	   fi
-#	fi
-
 	cd $destn
 	cp /version.txt $LOG_SYNC_PATH
         if [ "$MODEL_NUM" = "CGM4981COM" ] || [ "${MODEL_NUM}" = "CGM601TCOM" ] || [ "${MODEL_NUM}" = "SG417DBCT" ] || [ "${MODEL_NUM}" = "CWA438TCOM" ] || [ "$MODEL_NUM" == "SR213" ]; then		
@@ -1075,7 +1159,7 @@ backupnvram2logs_on_reboot()
        		sed -i "s/.*passphrase.*/\toption passphrase \'\'/g" $TarFolder$WIRELESS_CFG_FILE
         fi
 
-	# Note: Logs are already suppressed during syncLogs_nvram2()
+	# Note: Logs are already suppressed incrementally during syncLogs_nvram2()
 	echo "*.tgz" > $PATTERN_FILE # .tgz should be excluded while tar
 	if [ -f /tmp/backup_onboardlogs ] && [ -f /nvram/.device_onboarded ]; then
 	    echo "tar activation logs from backupnvram2logs_on_reboot"
@@ -1104,6 +1188,9 @@ backupnvram2logs_on_reboot()
 		rm -rf $TarFolder$BBHM_CFG_FILE
 		rm -rf $TarFolder$WIRELESS_CFG_FILE
 	fi
+
+	# Clean up offset files for any log files that were just deleted above
+	suppress_cleanup_offsets "$LOG_SYNC_PATH"
 
 	if [ "$BOX_TYPE" = "XB3" ]
 	then
