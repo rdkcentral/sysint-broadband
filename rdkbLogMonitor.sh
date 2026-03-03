@@ -1290,6 +1290,8 @@ if [ "$rdklogger_cron_enable" = "true" ]; then
         fi
     fi
 
+    getLogfileSize "$LOG_PATH"
+	
     if [ "$totalSize" -ge "$MAXSIZE" ]; then
         device_state
         regular_upload_state
