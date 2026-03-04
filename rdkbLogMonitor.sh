@@ -309,7 +309,7 @@ upload_nvram2_logs()
 	   echo_t "File to be uploaded from is $UploadFile "
 		if [ "$UPLOADED_AFTER_REBOOT" == "true" ]
 		then
-			$RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "false"
+			$RDK_LOGGER_PATH/uploadRDKBLogs.sh "$SERVER" "HTTP" "$URL" "false"
 		else
 			while [ "$loop" = "1" ]
 			do
@@ -325,7 +325,7 @@ upload_nvram2_logs()
 			done
 			sleep 120
 			random_sleep
-			$RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "false"
+			$RDK_LOGGER_PATH/uploadRDKBLogs.sh "$SERVER" "HTTP" "$URL" "false"
 			UPLOADED_AFTER_REBOOT="true"
 		fi
 	fi
@@ -584,7 +584,7 @@ bootup_upload_on_reboot()
 				echo_t "Random sleep completed" >> "$UPLOAD_SCHEDULE_FILE"
 				rm -f "$DELAY_COUNTDOWN_FILE"
 				if [ "$fileToUpload" != "" ]; then
-					$RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "true" "" $TMP_LOG_UPLOAD_PATH "true"
+					$RDK_LOGGER_PATH/uploadRDKBLogs.sh "$SERVER" "HTTP" "$URL" "true" "" "$TMP_LOG_UPLOAD_PATH" "true"
 				fi
 			else
 				echo_t "RDK_LOGGER: bootup_upload_on_reboot"
@@ -595,7 +595,7 @@ bootup_upload_on_reboot()
 						echo_t "Random sleep incomplete file_bootup_upload_on_reboot - next cron" >> "$UPLOAD_SCHEDULE_FILE"
 						return 0
 					fi
-					$RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "true" "" $TMP_LOG_UPLOAD_PATH "true"
+					$RDK_LOGGER_PATH/uploadRDKBLogs.sh "$SERVER" "HTTP" "$URL" "true" "" "$TMP_LOG_UPLOAD_PATH" "true"
 				fi
 			fi
 		else
@@ -608,7 +608,7 @@ boot_up_log_synced="$boot_up_log_synced"
 EOF
 			if [ "$fileToUpload" != "" ]; then
 				random_sleep
-				$RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "true" "" $TMP_LOG_UPLOAD_PATH "true"
+				$RDK_LOGGER_PATH/uploadRDKBLogs.sh "$SERVER" "HTTP" "$URL" "true" "" "$TMP_LOG_UPLOAD_PATH" "true"
 			fi
         fi
         
@@ -623,7 +623,7 @@ EOF
                 if [ "$fileToUpload" != "" ]; then
                     sleep 60
                     echo_t "Uploading backup logs found in $PRESERVE_LOG_PATH"
-                    $RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "true" "" $PRESERVE_LOG_PATH "true"
+                    $RDK_LOGGER_PATH/uploadRDKBLogs.sh "$SERVER" "HTTP" "$URL" "true" "" "$PRESERVE_LOG_PATH" "true"
                 else 
                     echo_t "No backup logs found in $PRESERVE_LOG_PATH"
                 fi
@@ -700,13 +700,13 @@ tar_bootup_upload()
 			echo_t "Random sleep completed" >> "$UPLOAD_SCHEDULE_FILE"
 
 			if [ "$UPLOADED_AFTER_REBOOT" == "true" ]; then
-				$RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "false" "" $TMP_LOG_UPLOAD_PATH "true"
+				$RDK_LOGGER_PATH/uploadRDKBLogs.sh "$SERVER" "HTTP" "$URL" "false" "" "$TMP_LOG_UPLOAD_PATH" "true"
 			else
 				if [ "$files_exist_in_preserve" == "true" ]; then
 					echo_t "Uploading backup logs found in $PRESERVE_LOG_PATH"
-					$RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "true" "" $PRESERVE_LOG_PATH "true"
+					$RDK_LOGGER_PATH/uploadRDKBLogs.sh "$SERVER" "HTTP" "$URL" "true" "" "$PRESERVE_LOG_PATH" "true"
 				else
-					$RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "false" "" $TMP_LOG_UPLOAD_PATH "true"
+					$RDK_LOGGER_PATH/uploadRDKBLogs.sh "$SERVER" "HTTP" "$URL" "false" "" "$TMP_LOG_UPLOAD_PATH" "true"
 				fi
 				UPLOADED_AFTER_REBOOT="true"
 			fi
@@ -733,7 +733,7 @@ EOF
 						echo_t "Random sleep incomplete upload logs in next cron" >> "$UPLOAD_SCHEDULE_FILE"
 						return 0
 					fi
-					$RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "false" "" $TMP_LOG_UPLOAD_PATH "true"
+					$RDK_LOGGER_PATH/uploadRDKBLogs.sh "$SERVER" "HTTP" "$URL" "false" "" "$TMP_LOG_UPLOAD_PATH" "true"
 				else
 					if [ "$CRON_MODE" = "1" ]; then
 						WEBSERVER_STARTED=`sysevent get webserver`
@@ -753,14 +753,14 @@ EOF
 							return 0
 						fi
 						echo_t "Uploading backup logs found in $PRESERVE_LOG_PATH"
-						$RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "true" "" $PRESERVE_LOG_PATH "true"
+						$RDK_LOGGER_PATH/uploadRDKBLogs.sh "$SERVER" "HTTP" "$URL" "true" "" "$PRESERVE_LOG_PATH" "true"
 					else
 						random_sleep
 						if [ $? -eq 0 ] && [ -f "$PROCESS_HEARTBEAT" ]; then
 							echo_t "Random sleep incomplete upload non-preserve log in next cron" >> "$UPLOAD_SCHEDULE_FILE"
 							return 0
 						fi
-						$RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "false" "" $TMP_LOG_UPLOAD_PATH "true"
+						$RDK_LOGGER_PATH/uploadRDKBLogs.sh "$SERVER" "HTTP" "$URL" "false" "" "$TMP_LOG_UPLOAD_PATH" "true"
 					fi
 					UPLOADED_AFTER_REBOOT="true"
 				fi
@@ -779,7 +779,7 @@ EOF
 		if [ "$UploadFile" != "" ]; then
 			if [ "$UPLOADED_AFTER_REBOOT" == "true" ]; then
 				random_sleep
-				$RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "false" "" $TMP_LOG_UPLOAD_PATH "true"
+				$RDK_LOGGER_PATH/uploadRDKBLogs.sh "$SERVER" "HTTP" "$URL" "false" "" "$TMP_LOG_UPLOAD_PATH" "true"
 			else
 				wait_for_stack
 				sleep 120
@@ -787,10 +787,10 @@ EOF
 				if [ "$files_exist_in_preserve" == "true" ]; then
 					random_sleep
 					echo_t "Uploading backup logs found in $PRESERVE_LOG_PATH"
-					$RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "true" "" $PRESERVE_LOG_PATH "true"
+					$RDK_LOGGER_PATH/uploadRDKBLogs.sh "$SERVER" "HTTP" "$URL" "true" "" "$PRESERVE_LOG_PATH" "true"
 				else
 					random_sleep
-					$RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "false" "" $TMP_LOG_UPLOAD_PATH "true"
+					$RDK_LOGGER_PATH/uploadRDKBLogs.sh "$SERVER" "HTTP" "$URL" "false" "" "$TMP_LOG_UPLOAD_PATH" "true"
 				fi
 				UPLOADED_AFTER_REBOOT="true"
 			fi
@@ -961,7 +961,7 @@ regular_upload_state()
 			fi
 		        if [ "$UPLOAD_LOGS" = "true" ]
 			then
-				$RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "false"
+				$RDK_LOGGER_PATH/uploadRDKBLogs.sh "$SERVER" "HTTP" "$URL" "false"
                                 http_ret=$?
                                 echo_t "Logupload http_ret value = $http_ret"
                                 if [ "$http_ret" = "200" ] || [ "$http_ret" = "302" ] ;then
@@ -973,7 +973,7 @@ regular_upload_state()
                                                  if [ "$fileToUpload" != "" ] ;then
                                                      file_list=$fileToUpload
                                                      echo_t "Direct comm. available preserve logs = $fileToUpload"
-                                                     $RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "true" "" $PRESERVE_LOG_PATH
+                                                     $RDK_LOGGER_PATH/uploadRDKBLogs.sh "$SERVER" "HTTP" "$URL" "true" "" "$PRESERVE_LOG_PATH"
                                                  else
                                                         echo_t "Direct comm. No preserve logs found in $PRESERVE_LOG_PATH"
                                                  fi
@@ -1040,7 +1040,7 @@ regular_upload_state()
 			backupnvram2logs "$TMP_UPLOAD"
 		        if [ "$UPLOAD_LOGS" = "true" ]
 			then			
-				$RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "false" "true"
+				$RDK_LOGGER_PATH/uploadRDKBLogs.sh "$SERVER" "HTTP" "$URL" "false" "true"
 			else
 				echo_t "Regular log upload is disabled"         
 			fi
