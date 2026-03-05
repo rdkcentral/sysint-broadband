@@ -48,17 +48,13 @@ fi
 rdklogger_cron_enable=`syscfg get RdkbLogCronEnable`
 if [ "$rdklogger_cron_enable" = "true" ]; then
 	CRON_MODE=1
-	LOCKFILE="/tmp/randomfile_cron.lock"
-    if [ -f "$LOCKFILE" ]; then
-        old_pid=$(cat "$LOCKFILE" 2>/dev/null)
-        if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
-            echo_t "Already a cron instance is running for fileUploadRandom file; No 2nd instance"
-            exit 0
-        fi
-        rm -f "$LOCKFILE"
+	LOCKDIR="/tmp/filerandom_cron.lockdir"
+    if ! mkdir "$LOCKDIR" 2>/dev/null; then
+        echo_t "Already a cron instance is running; No 2nd instance"
+        exit 0
     fi
-    echo $$ > "$LOCKFILE"
-    cleanup() { rm -f "$LOCKFILE"; }
+    echo_t "Cron instance started"
+    cleanup() { rmdir "$LOCKDIR" 2>/dev/null || true; }
     trap cleanup EXIT
 fi
 
