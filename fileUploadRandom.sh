@@ -72,7 +72,7 @@ if [ "$execution_mode" = "cron" ]; then
             cmd=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)
             case "$cmd" in
                 *fileUploadRandom.sh*)
-                    echo "Already running"
+                    echo_t "Already a cron instance is running for fileUploadRandom file; No 2nd instance"
                     exit 0
                     ;;
             esac
