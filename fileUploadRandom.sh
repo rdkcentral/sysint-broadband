@@ -41,8 +41,49 @@ HEARTBEAT_TICK_FILE="$FILEUPLOAD_TMP_DIR/.heartbeat_tick"
 CRON_SETUP_FLAG="$FILEUPLOAD_TMP_DIR/.cron_setup_complete"
 NEXT_UPLOAD_TIME_FILE="$FILEUPLOAD_TMP_DIR/.next_upload_timestamp"
 
+RDKLOGGER_EXECUTION_MODE="/tmp/.rdklogger_execution_mode"
+
 if [ ! -d "$FILEUPLOAD_TMP_DIR" ]; then
     mkdir -p "$FILEUPLOAD_TMP_DIR"
+fi
+
+rdklogger_cron_enable=`syscfg get RdkbLogCronEnable`
+
+if [ ! -f "$RDKLOGGER_EXECUTION_MODE" ]; then
+    if [ "$rdklogger_cron_enable" = "true" ]; then
+        echo "cron" > "$RDKLOGGER_EXECUTION_MODE"
+    else
+        echo "process" > "$RDKLOGGER_EXECUTION_MODE"
+    fi
+fi
+
+execution_mode=$(cat "$RDKLOGGER_EXECUTION_MODE")
+
+if [ "$execution_mode" = "cron" ]; then
+	CRON_MODE=1
+    LOCKDIR="/tmp/filerandom_cron.lock"
+
+    if mkdir "$LOCKDIR" 2>/dev/null; then
+        echo "$$" > "$LOCKDIR/pid"
+        trap 'rm -rf "$LOCKDIR"' EXIT INT TERM
+    else
+        pid=$(cat "$LOCKDIR/pid" 2>/dev/null)
+        if [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
+            cmd=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)
+            case "$cmd" in
+                *fileUploadRandom.sh*)
+                    echo_t "Already a cron instance is running for fileUploadRandom file; No 2nd instance"
+                    exit 0
+                    ;;
+            esac
+        fi
+
+        # stale lock
+        rm -rf "$LOCKDIR" 2>/dev/null || exit 1
+        mkdir "$LOCKDIR" || exit 1
+        echo "$$" > "$LOCKDIR/pid"
+        trap 'rm -rf "$LOCKDIR"' EXIT INT TERM
+    fi
 fi
 
 generate_random_delay()
@@ -90,7 +131,6 @@ calcRandTimeandUpload()
 
             if [ "$remaining" -le 300 ]; then
 				echo_t "fileupload_random: Sleeping $remaining seconds now" >> "$NEXT_UPLOAD_TIME_FILE"
-				rm -f "$DELAY_REMAINING_FILE" "$HEARTBEAT_TICK_FILE"
 				delay_completed=1
 				[ "$remaining" -gt 0 ] && sleep "$remaining"
             else
@@ -246,6 +286,9 @@ calcRandTimeandUpload()
     fi
 
     createSysDescr
+    if [ "$CRON_MODE" = "1" ]; then
+        rm -f "$DELAY_REMAINING_FILE" "$HEARTBEAT_TICK_FILE"
+    fi
 }
 
 
@@ -343,9 +386,7 @@ service_mode() {
     done
 }
 
-rdklogger_cron_enable=`syscfg get RdkbLogCronEnable`
-
-if [ "$rdklogger_cron_enable" = "true" ]; then
+if [ "$execution_mode" = "cron" ]; then
     CRON_MODE=1
 
 	if [ ! -d "$FILEUPLOAD_TMP_DIR" ]; then
