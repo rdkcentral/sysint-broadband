@@ -276,16 +276,16 @@ log_file_update_offset()
 # Log Suppression Functions
 # These functions analyze log content and suppress repeated patterns
 # to reduce log size during sync to nvram2
+# Suppression is applied AFTER logs are synced to nvram2.
 # ------------------------------------------------------------
 
-# suppress_log_content <input_file> <output_file>
-#   Processes log content through AWK-based suppression and writes result
-#   to output_file. Detects single-line and multi-line repeating patterns.
-suppress_log_content()
+# suppress_log_file_inline <file>
+#   Processes a single file in-place through AWK-based suppression.
+#   Detects single-line and multi-line repeating patterns.
+suppress_log_file_inline()
 {
     local INPUT_FILE="$1"
-    local OUTPUT_FILE="$2"
-    local TEMP_FILE="${OUTPUT_FILE}.suppress.tmp"
+    local TEMP_FILE="${INPUT_FILE}.suppress.tmp"
 
     awk '
 BEGIN {
@@ -479,9 +479,81 @@ END {
 }
 ' "$INPUT_FILE" > "$TEMP_FILE"
 
+    # Move temp file back to original (in-place suppression)
     if [ -f "$TEMP_FILE" ]; then
-        mv "$TEMP_FILE" "$OUTPUT_FILE"
+        mv "$TEMP_FILE" "$INPUT_FILE"
     fi
+}
+
+# suppress_logs_inline <directory>
+#   Iterates all files in <directory>, skips binaries/archives and
+#   pure numeric offset-marker files, calls suppress_log_file_inline()
+#   on each eligible file. Reports before/after sizes via echo_t.
+suppress_logs_inline()
+{
+    local dir="$1"
+    local processed=0
+    local total=0
+    local size_before=0
+    local size_after=0
+
+    # Calculate total size before suppression
+    size_before=$(du -sk "$dir" 2>/dev/null | awk '{print $1}')
+    if [ -z "$size_before" ]; then
+        size_before=0
+    fi
+
+    # Count total files
+    for file in "$dir"/*; do
+        if [ -f "$file" ]; then
+            total=$((total + 1))
+        fi
+    done
+
+    echo_t "Starting log suppression: Processing $total file(s) from $dir"
+    echo_t "Size before suppression: ${size_before} KB"
+
+    for file in "$dir"/*; do
+        # Skip if not a regular file
+        if [ ! -f "$file" ]; then
+            continue
+        fi
+
+        # Skip tar files and other binary files
+        case "$file" in
+            *.tgz|*.tar|*.gz|*.bin|*.core|*.suppress.tmp)
+                continue
+                ;;
+        esac
+
+        # Skip files that are just offset markers (first line is just a number)
+        first_line=$(head -n 1 "$file" 2>/dev/null)
+        line_count=$(wc -l < "$file" 2>/dev/null)
+        if echo "$first_line" | grep -q "^[0-9]*$" && [ "$line_count" -le 2 ]; then
+            continue
+        fi
+
+        suppress_log_file_inline "$file"
+        processed=$((processed + 1))
+    done
+
+    # Calculate total size after suppression
+    size_after=$(du -sk "$dir" 2>/dev/null | awk '{print $1}')
+    if [ -z "$size_after" ]; then
+        size_after=0
+    fi
+
+    # Calculate size difference
+    size_diff=$((size_before - size_after))
+    if [ "$size_before" -gt 0 ]; then
+        percent_reduced=$((size_diff * 100 / size_before))
+    else
+        percent_reduced=0
+    fi
+
+    echo_t "Log suppression completed: Processed $processed/$total files"
+    echo_t "Size after suppression: ${size_after} KB"
+    echo_t "Size reduced: ${size_diff} KB (${percent_reduced}% reduction)"
 }
 
 
@@ -489,26 +561,8 @@ log_file_append_logs()
 {
     log_file=$1
     curr_offset=$2
-
-    # Extract new lines to a temporary file for suppression
-    local TEMP_NEW_LINES="${LOG_SYNC_PATH}${log_file}.newlines.tmp"
-    local TEMP_SUPPRESSED="${LOG_SYNC_PATH}${log_file}.suppressed.tmp"
-
-    # Get new lines starting from the offset
-    tail -n +$curr_offset $LOG_PATH$log_file > "$TEMP_NEW_LINES"
-
-    # Apply log suppression to new lines if there is content
-    if [ -s "$TEMP_NEW_LINES" ]; then
-        suppress_log_content "$TEMP_NEW_LINES" "$TEMP_SUPPRESSED"
-        # Append suppressed content to nvram2 log file
-        if [ -f "$TEMP_SUPPRESSED" ]; then
-            cat "$TEMP_SUPPRESSED" >> $LOG_SYNC_PATH$log_file
-            rm -f "$TEMP_SUPPRESSED"
-        fi
-    fi
-
-    # Cleanup temporary files
-    rm -f "$TEMP_NEW_LINES"
+    # appending the logs to nvram2 starting from the offset
+    tail -n +$curr_offset $LOG_PATH$log_file >> $LOG_SYNC_PATH$log_file
 }
 
 
@@ -638,6 +692,11 @@ syncLogs_nvram2()
     fi
 
     log_files_sync_to_nvram2 $option
+
+    # Suppress repeated logs after syncing to nvram2.
+    # Uses fully inlined suppress functions.
+    echo_t "Analysing and suppressing repeated logs in nvram2"
+    suppress_logs_inline $LOG_SYNC_PATH
 
     if [ -f /tmp/backup_onboardlogs ]; then
         backup_onboarding_logs
