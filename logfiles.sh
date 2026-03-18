@@ -98,6 +98,259 @@ fi
 LOG_SUPPRESS_OFFSET_DIR="$LOG_SYNC_PATH/.log_suppress_offsets"
 
 # ---------------------------------------------------------------------------
+# Log Upload Statistics Tracking
+#
+# Tracks total log uploads to the cloud and size savings from suppression.
+# Statistics are persisted in nvram to survive reboots.
+#
+# Counters:
+#   - total_uploads       : Total number of successful uploads to cloud
+#   - total_failed        : Total number of failed upload attempts
+#   - total_bytes_original: Cumulative original log size (before suppression)
+#   - total_bytes_uploaded: Cumulative uploaded log size (after suppression)
+#   - last_upload_time    : Timestamp of last successful upload
+# ---------------------------------------------------------------------------
+LOG_UPLOAD_STATS_FILE="/nvram/.log_upload_stats"
+LOG_UPLOAD_STATS_TMP="/tmp/.log_upload_stats_session"
+
+# ---------------------------------------------------------------------------
+# _init_upload_stats
+#   Initialize the stats file if it doesn't exist.
+# ---------------------------------------------------------------------------
+_init_upload_stats()
+{
+    if [ ! -f "$LOG_UPLOAD_STATS_FILE" ]; then
+        cat > "$LOG_UPLOAD_STATS_FILE" << EOF
+total_uploads=0
+total_failed=0
+total_bytes_original=0
+total_bytes_uploaded=0
+last_upload_time=0
+EOF
+    fi
+    # Session stats for current boot cycle
+    if [ ! -f "$LOG_UPLOAD_STATS_TMP" ]; then
+        cat > "$LOG_UPLOAD_STATS_TMP" << EOF
+session_uploads=0
+session_failed=0
+session_bytes_original=0
+session_bytes_uploaded=0
+EOF
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# _get_stat <stat_name> [file]
+#   Get a single statistic value from the stats file.
+# ---------------------------------------------------------------------------
+_get_stat()
+{
+    local stat_name="$1"
+    local stats_file="${2:-$LOG_UPLOAD_STATS_FILE}"
+    
+    if [ -f "$stats_file" ]; then
+        grep "^${stat_name}=" "$stats_file" 2>/dev/null | cut -d'=' -f2
+    else
+        echo "0"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# _set_stat <stat_name> <value> [file]
+#   Set a single statistic value in the stats file.
+# ---------------------------------------------------------------------------
+_set_stat()
+{
+    local stat_name="$1"
+    local value="$2"
+    local stats_file="${3:-$LOG_UPLOAD_STATS_FILE}"
+    
+    _init_upload_stats
+    
+    if grep -q "^${stat_name}=" "$stats_file" 2>/dev/null; then
+        sed -i "s/^${stat_name}=.*/${stat_name}=${value}/" "$stats_file"
+    else
+        echo "${stat_name}=${value}" >> "$stats_file"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# _increment_stat <stat_name> [increment_value] [file]
+#   Increment a statistic by the given value (default: 1).
+# ---------------------------------------------------------------------------
+_increment_stat()
+{
+    local stat_name="$1"
+    local increment="${2:-1}"
+    local stats_file="${3:-$LOG_UPLOAD_STATS_FILE}"
+    
+    local current
+    current=$(_get_stat "$stat_name" "$stats_file")
+    current=${current:-0}
+    
+    local new_value=$(( current + increment ))
+    _set_stat "$stat_name" "$new_value" "$stats_file"
+}
+
+# ---------------------------------------------------------------------------
+# log_upload_record_attempt <original_size_kb> <upload_size_kb>
+#   Record a log upload attempt with size information.
+#   Called before upload with the pre-suppression and post-suppression sizes.
+# ---------------------------------------------------------------------------
+log_upload_record_attempt()
+{
+    local original_size_kb="${1:-0}"
+    local upload_size_kb="${2:-0}"
+    
+    _init_upload_stats
+    
+    # Store pending upload info for correlation with success/failure
+    echo "pending_original_kb=$original_size_kb" > /tmp/.pending_upload_stats
+    echo "pending_upload_kb=$upload_size_kb" >> /tmp/.pending_upload_stats
+}
+
+# ---------------------------------------------------------------------------
+# log_upload_record_success
+#   Record a successful log upload. Updates both persistent and session stats.
+# ---------------------------------------------------------------------------
+log_upload_record_success()
+{
+    _init_upload_stats
+    
+    local original_kb=0
+    local upload_kb=0
+    
+    # Read pending upload info
+    if [ -f /tmp/.pending_upload_stats ]; then
+        original_kb=$(grep "^pending_original_kb=" /tmp/.pending_upload_stats 2>/dev/null | cut -d'=' -f2)
+        upload_kb=$(grep "^pending_upload_kb=" /tmp/.pending_upload_stats 2>/dev/null | cut -d'=' -f2)
+        rm -f /tmp/.pending_upload_stats
+    fi
+    
+    original_kb=${original_kb:-0}
+    upload_kb=${upload_kb:-0}
+    
+    # Update persistent stats
+    _increment_stat "total_uploads" 1 "$LOG_UPLOAD_STATS_FILE"
+    _increment_stat "total_bytes_original" "$original_kb" "$LOG_UPLOAD_STATS_FILE"
+    _increment_stat "total_bytes_uploaded" "$upload_kb" "$LOG_UPLOAD_STATS_FILE"
+    _set_stat "last_upload_time" "$(date +%s)" "$LOG_UPLOAD_STATS_FILE"
+    
+    # Update session stats
+    _increment_stat "session_uploads" 1 "$LOG_UPLOAD_STATS_TMP"
+    _increment_stat "session_bytes_original" "$original_kb" "$LOG_UPLOAD_STATS_TMP"
+    _increment_stat "session_bytes_uploaded" "$upload_kb" "$LOG_UPLOAD_STATS_TMP"
+    
+    # Log the upload success with stats
+    echo_t "LOG_UPLOAD_STATS: Upload successful - Size: ${upload_kb}KB (original: ${original_kb}KB)"
+}
+
+# ---------------------------------------------------------------------------
+# log_upload_record_failure
+#   Record a failed log upload attempt.
+# ---------------------------------------------------------------------------
+log_upload_record_failure()
+{
+    _init_upload_stats
+    
+    # Update persistent stats
+    _increment_stat "total_failed" 1 "$LOG_UPLOAD_STATS_FILE"
+    
+    # Update session stats
+    _increment_stat "session_failed" 1 "$LOG_UPLOAD_STATS_TMP"
+    
+    # Clean up pending stats
+    rm -f /tmp/.pending_upload_stats
+    
+    echo_t "LOG_UPLOAD_STATS: Upload failed"
+}
+
+# ---------------------------------------------------------------------------
+# log_upload_print_stats
+#   Print current log upload statistics summary.
+# ---------------------------------------------------------------------------
+log_upload_print_stats()
+{
+    _init_upload_stats
+    
+    local total_uploads total_failed total_orig total_uploaded
+    local session_uploads session_failed session_orig session_uploaded
+    local last_upload savings_pct session_savings_pct
+    
+    # Persistent (all-time) stats
+    total_uploads=$(_get_stat "total_uploads" "$LOG_UPLOAD_STATS_FILE")
+    total_failed=$(_get_stat "total_failed" "$LOG_UPLOAD_STATS_FILE")
+    total_orig=$(_get_stat "total_bytes_original" "$LOG_UPLOAD_STATS_FILE")
+    total_uploaded=$(_get_stat "total_bytes_uploaded" "$LOG_UPLOAD_STATS_FILE")
+    last_upload=$(_get_stat "last_upload_time" "$LOG_UPLOAD_STATS_FILE")
+    
+    # Session stats
+    session_uploads=$(_get_stat "session_uploads" "$LOG_UPLOAD_STATS_TMP")
+    session_failed=$(_get_stat "session_failed" "$LOG_UPLOAD_STATS_TMP")
+    session_orig=$(_get_stat "session_bytes_original" "$LOG_UPLOAD_STATS_TMP")
+    session_uploaded=$(_get_stat "session_bytes_uploaded" "$LOG_UPLOAD_STATS_TMP")
+    
+    # Calculate savings percentages
+    if [ "${total_orig:-0}" -gt 0 ]; then
+        savings_pct=$(( (total_orig - total_uploaded) * 100 / total_orig ))
+    else
+        savings_pct=0
+    fi
+    
+    if [ "${session_orig:-0}" -gt 0 ]; then
+        session_savings_pct=$(( (session_orig - session_uploaded) * 100 / session_orig ))
+    else
+        session_savings_pct=0
+    fi
+    
+    # Format last upload time
+    local last_upload_str="Never"
+    if [ "${last_upload:-0}" -gt 0 ]; then
+        last_upload_str=$(date -d "@$last_upload" "+%Y-%m-%d %H:%M:%S" 2>/dev/null || date -r "$last_upload" "+%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "$last_upload")
+    fi
+    
+    echo_t "=============================================="
+    echo_t "LOG UPLOAD STATISTICS"
+    echo_t "=============================================="
+    echo_t "ALL-TIME STATISTICS (persisted across reboots):"
+    echo_t "  Total successful uploads : ${total_uploads:-0}"
+    echo_t "  Total failed attempts    : ${total_failed:-0}"
+    echo_t "  Original log data        : ${total_orig:-0} KB"
+    echo_t "  Uploaded (after suppress): ${total_uploaded:-0} KB"
+    echo_t "  Data savings             : ${savings_pct}%"
+    echo_t "  Last successful upload   : $last_upload_str"
+    echo_t "----------------------------------------------"
+    echo_t "SESSION STATISTICS (since last reboot):"
+    echo_t "  Successful uploads       : ${session_uploads:-0}"
+    echo_t "  Failed attempts          : ${session_failed:-0}"
+    echo_t "  Original log data        : ${session_orig:-0} KB"
+    echo_t "  Uploaded (after suppress): ${session_uploaded:-0} KB"
+    echo_t "  Session data savings     : ${session_savings_pct}%"
+    echo_t "=============================================="
+}
+
+# ---------------------------------------------------------------------------
+# log_upload_reset_stats [all|session]
+#   Reset statistics. 'session' resets only session stats, 'all' resets both.
+# ---------------------------------------------------------------------------
+log_upload_reset_stats()
+{
+    local scope="${1:-all}"
+    
+    if [ "$scope" = "all" ] || [ "$scope" = "persistent" ]; then
+        rm -f "$LOG_UPLOAD_STATS_FILE"
+        echo_t "LOG_UPLOAD_STATS: All-time statistics reset"
+    fi
+    
+    if [ "$scope" = "all" ] || [ "$scope" = "session" ]; then
+        rm -f "$LOG_UPLOAD_STATS_TMP"
+        echo_t "LOG_UPLOAD_STATS: Session statistics reset"
+    fi
+    
+    _init_upload_stats
+}
+
+# ---------------------------------------------------------------------------
 # _suppress_get_offset <offset_file>
 #   Echo the saved line-count offset; echoes 0 when file does not exist yet.
 # ---------------------------------------------------------------------------
@@ -1059,6 +1312,12 @@ backupnvram2logs()
 	# Note: Logs are already suppressed incrementally during syncLogs_nvram2()
 	echo "*.tgz" > $PATTERN_FILE # .tgz should be excluded while tar
 	wan_event=`sysevent get wan_event_log_upload`
+
+	# Record original log size before tar (for upload tracking)
+	local original_log_size_kb=0
+	original_log_size_kb=$(du -sk "$LOG_SYNC_PATH" 2>/dev/null | awk '{print $1}')
+	original_log_size_kb=${original_log_size_kb:-0}
+
         if [ -f "/tmp/.uploadregularlogs" ] || [ "$wan_event" == "yes" ]
         then
             if [ -f /tmp/backup_onboardlogs ] && [ -f /nvram/.device_onboarded ]; then
@@ -1070,6 +1329,16 @@ backupnvram2logs()
                 echo "tar logs from backupnvram2logs"
 	            tar -X $PATTERN_FILE -cvzf $MAC"_Logs_$dt.tgz" $LOG_SYNC_PATH
 	        fi
+
+            # Record upload attempt with size info for tracking
+            local tar_file_size_kb=0
+            local tar_file=$(ls -1 "$destn"/*.tgz 2>/dev/null | head -1)
+            if [ -n "$tar_file" ] && [ -f "$tar_file" ]; then
+                tar_file_size_kb=$(du -sk "$tar_file" 2>/dev/null | awk '{print $1}')
+                tar_file_size_kb=${tar_file_size_kb:-0}
+            fi
+            log_upload_record_attempt "$original_log_size_kb" "$tar_file_size_kb"
+            echo_t "LOG_UPLOAD_STATS: Prepared upload - Original: ${original_log_size_kb}KB, Tar: ${tar_file_size_kb}KB"
         fi
 
 	rm $PATTERN_FILE
@@ -1161,6 +1430,12 @@ backupnvram2logs_on_reboot()
 
 	# Note: Logs are already suppressed incrementally during syncLogs_nvram2()
 	echo "*.tgz" > $PATTERN_FILE # .tgz should be excluded while tar
+
+	# Record original log size before tar (for upload tracking)
+	local original_log_size_kb=0
+	original_log_size_kb=$(du -sk "$TarFolder" 2>/dev/null | awk '{print $1}')
+	original_log_size_kb=${original_log_size_kb:-0}
+
 	if [ -f /tmp/backup_onboardlogs ] && [ -f /nvram/.device_onboarded ]; then
 	    echo "tar activation logs from backupnvram2logs_on_reboot"
 	    copy_onboardlogs "$TarFolder"
@@ -1170,6 +1445,17 @@ backupnvram2logs_on_reboot()
         echo "tar logs from backupnvram2logs_on_reboot"
 	    tar -X $PATTERN_FILE -cvzf $MAC"_Logs_$dt.tgz" $TarFolder
     fi
+
+	# Record upload attempt with size info for tracking
+	local tar_file_size_kb=0
+	local tar_file=$(ls -1 "$destn"/*.tgz 2>/dev/null | head -1)
+	if [ -n "$tar_file" ] && [ -f "$tar_file" ]; then
+	    tar_file_size_kb=$(du -sk "$tar_file" 2>/dev/null | awk '{print $1}')
+	    tar_file_size_kb=${tar_file_size_kb:-0}
+	fi
+	log_upload_record_attempt "$original_log_size_kb" "$tar_file_size_kb"
+	echo_t "LOG_UPLOAD_STATS: Prepared reboot upload - Original: ${original_log_size_kb}KB, Tar: ${tar_file_size_kb}KB"
+
 	rm $PATTERN_FILE
 	
 	rm -rf $TarFolder*.txt*

@@ -579,6 +579,7 @@ HttpLogUpload()
             echo_t "INVALID RETURN CODE: $http_code"
             echo_t "LOG UPLOAD UNSUCCESSFUL TO S3"
             t2CountNotify "SYS_ERROR_LOGUPLOAD_FAILED"
+	    log_upload_record_failure
             preserveThisLog $UploadFile $UploadPath
             continue
         fi
@@ -661,6 +662,7 @@ HttpLogUpload()
             if [ "$http_code" = "200" ];then
                 echo_t "LOGS UPLOADED SUCCESSFULLY, RETURN CODE: $http_code"
 		t2CountNotify "SYS_INFO_LOGS_UPLOADED"
+		log_upload_record_success
                 rm -rf $UploadFile
 		if [ -f "$PRESERVE_LOG_PATH/$UploadFile" ] && [ "$UploadPath" != "$PRESERVE_LOG_PATH" ]; then #Remove from backup.
 		   rm -rf "$PRESERVE_LOG_PATH/$UploadFile"
@@ -674,6 +676,7 @@ HttpLogUpload()
 	        else
                  if [ "$http_code" -ne "-1" ]; then
                     echo_t "LOGS UPLOAD FAILED, RETURN CODE: $http_code"
+		    log_upload_record_failure
                     preserveThisLog $UploadFile $UploadPath
                 fi
             fi
@@ -789,6 +792,7 @@ HttpLogUpload()
                 if [ "$http_code" = "200" ];then
                     echo_t "LOGS UPLOADED SUCCESSFULLY, RETURN CODE: $http_code"
 		    t2CountNotify "SYS_INFO_LOGS_UPLOADED"
+		    log_upload_record_success
                     result=0
                     rm -rf $UploadFile
                     if [ -f "$PRESERVE_LOG_PATH/$UploadFile" ] && [ "$UploadPath" != "$PRESERVE_LOG_PATH" ]; then #Remove from backup.
@@ -802,6 +806,7 @@ HttpLogUpload()
                 else
                     if [ "$http_code" -ne "-1" ]; then
                         echo_t "LOG UPLOAD FAILED, RETURN CODE: $http_code"
+			log_upload_record_failure
                         preserveThisLog $UploadFile $UploadPath
                     fi
                 fi
@@ -811,6 +816,7 @@ HttpLogUpload()
                 echo_t "INVALID RETURN CODE: $http_code"
                 echo_t "LOG UPLOAD UNSUCCESSFUL TO S3"
                 t2CountNotify "SYS_ERROR_LOGUPLOAD_FAILED"
+		log_upload_record_failure
                 preserveThisLog $UploadFile $UploadPath
             fi
 
