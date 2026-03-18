@@ -272,12 +272,243 @@ log_file_update_offset()
 }
 
 
+# ------------------------------------------------------------
+# Log Suppression Functions
+# These functions analyze log content and suppress repeated patterns
+# to reduce log size during sync to nvram2
+# ------------------------------------------------------------
+
+# suppress_log_content <input_file> <output_file>
+#   Processes log content through AWK-based suppression and writes result
+#   to output_file. Detects single-line and multi-line repeating patterns.
+suppress_log_content()
+{
+    local INPUT_FILE="$1"
+    local OUTPUT_FILE="$2"
+    local TEMP_FILE="${OUTPUT_FILE}.suppress.tmp"
+
+    awk '
+BEGIN {
+    idx = 0
+}
+
+{
+    # Skip empty lines
+    if (length($0) == 0 || $0 ~ /^[[:space:]]*$/) {
+        next
+    }
+
+    idx++
+    lines[idx] = $0
+    has_timestamp = 0
+    timestamp = ""
+    message = ""
+
+    # Try to extract timestamp - supports multiple formats
+    # Format: YYMMDD-HH:MM:SS.microseconds (6 digits for date)
+    if (match($0, /^[0-9]{6}-[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6} /)) {
+        timestamp = substr($0, 1, RLENGTH)
+        message = substr($0, RLENGTH + 1)
+        has_timestamp = 1
+    }
+    # Format: YYYY-MM-DD-HH:MM:SS.microseconds or similar dash-separated
+    else if (match($0, /^[0-9-]+-[0-9:.]+ /)) {
+        timestamp = substr($0, 1, RLENGTH)
+        message = substr($0, RLENGTH + 1)
+        has_timestamp = 1
+    }
+    # Format: YYYY MMM DD HH:MM:SS (e.g., 2024 Jan 15 10:30:45)
+    else if (match($0, /^[0-9]{4} [A-Za-z]{3} [0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} /)) {
+        timestamp = substr($0, 1, RLENGTH)
+        message = substr($0, RLENGTH + 1)
+        has_timestamp = 1
+    }
+    # Format: [Day Mon DD HH:MM:SS YYYY] (e.g., [Mon Jan 15 10:30:45 2024])
+    else if (match($0, /^\[[A-Za-z]{3} [A-Za-z]{3} [0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} [0-9]{4}\] /)) {
+        timestamp = substr($0, 2, RLENGTH - 2)
+        message = substr($0, RLENGTH + 2)
+        has_timestamp = 1
+    }
+    # Format: Day, Mon DD HH:MM:SS YYYY: (e.g., Monday, Jan 15 10:30:45 2024:)
+    else if (match($0, /^[A-Za-z]+, [A-Za-z]{3} [0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} [0-9]{4}:/)) {
+        timestamp = substr($0, 1, RLENGTH - 1)
+        message = substr($0, RLENGTH + 1)
+        has_timestamp = 1
+    }
+    # Format: YYYYMMDD HHMMSS.microseconds (e.g., 20240115 103045.123456)
+    else if (match($0, /^[0-9]{8} [0-9]{6}\.[0-9]{6} /)) {
+        timestamp = substr($0, 1, RLENGTH)
+        message = substr($0, RLENGTH + 1)
+        has_timestamp = 1
+    }
+    # Format: Day Mon DD HH:MM:SS TZ YYYY or Day Mon DD HH:MM:SS YYYY
+    else if (match($0, /^[A-Za-z]{3} [A-Za-z]{3} [0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} [A-Za-z]{3} [0-9]{4} /) || match($0, /^[A-Za-z]{3} [A-Za-z]{3} [0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} [0-9]{4} /)) {
+        timestamp = substr($0, 1, RLENGTH)
+        message = substr($0, RLENGTH + 1)
+        has_timestamp = 1
+    }
+    # Format: [OneWifi] YYMMDD-HH:MM:SS.microseconds<I/E>
+    else if (match($0, /^\[OneWifi\] [0-9]{6}-[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}<[IE]> /)) {
+        timestamp = substr($0, 11, 17)
+        message = substr($0, 30)
+        has_timestamp = 1
+    }
+    # Format: YYYY.MM.DD HH:MM:SS (e.g., 2024.01.15 10:30:45)
+    else if (match($0, /^[0-9]{4}\.[0-9]{2}\.[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} /)) {
+        timestamp = substr($0, 1, 19)
+        message = substr($0, 21)
+        has_timestamp = 1
+    }
+    # Format: [HH:MM:SS DD/MM/YYYY] (time and date in brackets)
+    else if (match($0, /^\[([0-9]{2}:[0-9]{2}:[0-9]{2}) ([0-9]{2}\/[0-9]{2}\/[0-9]{4})\] /)) {
+        timestamp = substr($0, 2, RLENGTH - 3)
+        message = substr($0, RLENGTH + 2)
+        has_timestamp = 1
+    }
+    # Format: YYYY-MM-DD HH:MM:SS.microseconds (standard datetime)
+    else if (match($0, /^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6} /)) {
+        timestamp = substr($0, 1, RLENGTH)
+        message = substr($0, RLENGTH + 1)
+        has_timestamp = 1
+    }
+    # Format: YYYY-MM-DDTHH:MM:SS.microsecondsZ: (ISO format)
+    else if (match($0, /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z[[:space:]]*:/)) {
+        timestamp = substr($0, 1, RLENGTH)
+        message = substr($0, RLENGTH + 1)
+        has_timestamp = 1
+    }
+    # No timestamp found - treat entire line as message
+    else {
+        has_timestamp = 0
+        timestamp = ""
+        message = $0
+    }
+
+    timestamps[idx] = timestamp
+    content[idx] = message
+    gsub(/^[ \t]+/, "", content[idx])
+}
+
+END {
+    i = 1
+    while (i <= idx) {
+        found = 0
+
+        # If line has no timestamp, print as-is and skip pattern detection
+        if (timestamps[i] == "") {
+            print lines[i]
+            i++
+            continue
+        }
+
+        # First check for single line repetition
+        if (i < idx && content[i] == content[i+1]) {
+            rep_count = 1
+            j = i + 1
+            while (j <= idx && content[i] == content[j] && timestamps[j] != "") {
+                rep_count++
+                j++
+            }
+
+            if (rep_count > 1) {
+                # Single line repetition - show inline suppression
+                ts_list = ""
+                for (r = 1; r < rep_count; r++) {
+                    if (ts_list != "") ts_list = ts_list ","
+                    ts_list = ts_list "<" timestamps[i + r] ">"
+                }
+                print lines[i] " [suppressed count: " (rep_count - 1) ", timestamps: " ts_list "]"
+                i += rep_count
+                found = 1
+            }
+        }
+
+        # If not single line repetition, try multi-line patterns (2 lines up to N lines)
+        if (!found) {
+            max_pattern_len = 10
+            if (idx - i < max_pattern_len) max_pattern_len = idx - i
+
+            for (plen = 2; plen <= max_pattern_len && !found; plen++) {
+                if (i + plen > idx) continue
+
+                rep_count = 1
+                can_continue = 1
+
+                while (can_continue && i + plen * (rep_count + 1) <= idx) {
+                    matches = 1
+                    for (k = 0; k < plen; k++) {
+                        if (content[i + k] != content[i + plen * rep_count + k] || timestamps[i + plen * rep_count + k] == "") {
+                            matches = 0
+                            break
+                        }
+                    }
+
+                    if (matches) {
+                        rep_count++
+                    } else {
+                        can_continue = 0
+                    }
+                }
+
+                if (rep_count > 1) {
+                    for (k = 0; k < plen; k++) {
+                        print lines[i + k]
+                    }
+
+                    ts_start = timestamps[i + plen]
+                    ts_end = timestamps[i + plen * (rep_count - 1) + plen - 1]
+
+                    if (rep_count == 2) {
+                        print "[Above " plen " lines occurred immediately, pattern suppressed, count:" (rep_count - 1) ",timestamps: [" ts_start "] to[" ts_end "]]"
+                    } else {
+                        print "[Above " plen " lines occurred, pattern suppressed, count:" (rep_count - 1) ",timestamps: [" ts_start "] to[" ts_end "]]"
+                    }
+
+                    i += plen * rep_count
+                    found = 1
+                }
+            }
+        }
+
+        # No pattern found, print line as-is
+        if (!found) {
+            print lines[i]
+            i++
+        }
+    }
+}
+' "$INPUT_FILE" > "$TEMP_FILE"
+
+    if [ -f "$TEMP_FILE" ]; then
+        mv "$TEMP_FILE" "$OUTPUT_FILE"
+    fi
+}
+
+
 log_file_append_logs()
 {
     log_file=$1
     curr_offset=$2
-    # appending the logs to nvram2 starting from the offset
-    tail -n +$curr_offset $LOG_PATH$log_file >> $LOG_SYNC_PATH$log_file
+
+    # Extract new lines to a temporary file for suppression
+    local TEMP_NEW_LINES="${LOG_SYNC_PATH}${log_file}.newlines.tmp"
+    local TEMP_SUPPRESSED="${LOG_SYNC_PATH}${log_file}.suppressed.tmp"
+
+    # Get new lines starting from the offset
+    tail -n +$curr_offset $LOG_PATH$log_file > "$TEMP_NEW_LINES"
+
+    # Apply log suppression to new lines if there is content
+    if [ -s "$TEMP_NEW_LINES" ]; then
+        suppress_log_content "$TEMP_NEW_LINES" "$TEMP_SUPPRESSED"
+        # Append suppressed content to nvram2 log file
+        if [ -f "$TEMP_SUPPRESSED" ]; then
+            cat "$TEMP_SUPPRESSED" >> $LOG_SYNC_PATH$log_file
+            rm -f "$TEMP_SUPPRESSED"
+        fi
+    fi
+
+    # Cleanup temporary files
+    rm -f "$TEMP_NEW_LINES"
 }
 
 
