@@ -273,35 +273,20 @@ log_upload_print_stats()
 {
     _init_upload_stats
     
-    local total_uploads total_failed total_orig total_uploaded
-    local session_uploads session_failed session_orig session_uploaded
-    local last_upload savings_pct session_savings_pct
+    local total_uploads total_failed total_uploaded
+    local session_uploads session_failed session_uploaded
+    local last_upload
     
     # Persistent (all-time) stats
     total_uploads=$(_get_stat "total_uploads" "$LOG_UPLOAD_STATS_FILE")
     total_failed=$(_get_stat "total_failed" "$LOG_UPLOAD_STATS_FILE")
-    total_orig=$(_get_stat "total_bytes_original" "$LOG_UPLOAD_STATS_FILE")
     total_uploaded=$(_get_stat "total_bytes_uploaded" "$LOG_UPLOAD_STATS_FILE")
     last_upload=$(_get_stat "last_upload_time" "$LOG_UPLOAD_STATS_FILE")
     
     # Session stats
     session_uploads=$(_get_stat "session_uploads" "$LOG_UPLOAD_STATS_TMP")
     session_failed=$(_get_stat "session_failed" "$LOG_UPLOAD_STATS_TMP")
-    session_orig=$(_get_stat "session_bytes_original" "$LOG_UPLOAD_STATS_TMP")
     session_uploaded=$(_get_stat "session_bytes_uploaded" "$LOG_UPLOAD_STATS_TMP")
-    
-    # Calculate savings percentages
-    if [ "${total_orig:-0}" -gt 0 ]; then
-        savings_pct=$(( (total_orig - total_uploaded) * 100 / total_orig ))
-    else
-        savings_pct=0
-    fi
-    
-    if [ "${session_orig:-0}" -gt 0 ]; then
-        session_savings_pct=$(( (session_orig - session_uploaded) * 100 / session_orig ))
-    else
-        session_savings_pct=0
-    fi
     
     # Format last upload time
     local last_upload_str="Never"
@@ -315,17 +300,13 @@ log_upload_print_stats()
     echo_t "ALL-TIME STATISTICS (persisted across reboots):"
     echo_t "  Total successful uploads : ${total_uploads:-0}"
     echo_t "  Total failed attempts    : ${total_failed:-0}"
-    echo_t "  Original log data        : ${total_orig:-0} KB"
-    echo_t "  Uploaded (after suppress): ${total_uploaded:-0} KB"
-    echo_t "  Data savings             : ${savings_pct}%"
+    echo_t "  Total data uploaded      : ${total_uploaded:-0} KB"
     echo_t "  Last successful upload   : $last_upload_str"
     echo_t "----------------------------------------------"
     echo_t "SESSION STATISTICS (since last reboot):"
     echo_t "  Successful uploads       : ${session_uploads:-0}"
     echo_t "  Failed attempts          : ${session_failed:-0}"
-    echo_t "  Original log data        : ${session_orig:-0} KB"
-    echo_t "  Uploaded (after suppress): ${session_uploaded:-0} KB"
-    echo_t "  Session data savings     : ${session_savings_pct}%"
+    echo_t "  Data uploaded            : ${session_uploaded:-0} KB"
     echo_t "=============================================="
 }
 
@@ -1312,12 +1293,6 @@ backupnvram2logs()
 	# Note: Logs are already suppressed incrementally during syncLogs_nvram2()
 	echo "*.tgz" > $PATTERN_FILE # .tgz should be excluded while tar
 	wan_event=`sysevent get wan_event_log_upload`
-
-	# Record original log size before tar (for upload tracking)
-	local original_log_size_kb=0
-	original_log_size_kb=$(du -sk "$LOG_SYNC_PATH" 2>/dev/null | awk '{print $1}')
-	original_log_size_kb=${original_log_size_kb:-0}
-
         if [ -f "/tmp/.uploadregularlogs" ] || [ "$wan_event" == "yes" ]
         then
             if [ -f /tmp/backup_onboardlogs ] && [ -f /nvram/.device_onboarded ]; then
@@ -1329,16 +1304,6 @@ backupnvram2logs()
                 echo "tar logs from backupnvram2logs"
 	            tar -X $PATTERN_FILE -cvzf $MAC"_Logs_$dt.tgz" $LOG_SYNC_PATH
 	        fi
-
-            # Record upload attempt with size info for tracking
-            local tar_file_size_kb=0
-            local tar_file=$(ls -1 "$destn"/*.tgz 2>/dev/null | head -1)
-            if [ -n "$tar_file" ] && [ -f "$tar_file" ]; then
-                tar_file_size_kb=$(du -sk "$tar_file" 2>/dev/null | awk '{print $1}')
-                tar_file_size_kb=${tar_file_size_kb:-0}
-            fi
-            log_upload_record_attempt "$original_log_size_kb" "$tar_file_size_kb"
-            echo_t "LOG_UPLOAD_STATS: Prepared upload - Original: ${original_log_size_kb}KB, Tar: ${tar_file_size_kb}KB"
         fi
 
 	rm $PATTERN_FILE
@@ -1430,12 +1395,6 @@ backupnvram2logs_on_reboot()
 
 	# Note: Logs are already suppressed incrementally during syncLogs_nvram2()
 	echo "*.tgz" > $PATTERN_FILE # .tgz should be excluded while tar
-
-	# Record original log size before tar (for upload tracking)
-	local original_log_size_kb=0
-	original_log_size_kb=$(du -sk "$TarFolder" 2>/dev/null | awk '{print $1}')
-	original_log_size_kb=${original_log_size_kb:-0}
-
 	if [ -f /tmp/backup_onboardlogs ] && [ -f /nvram/.device_onboarded ]; then
 	    echo "tar activation logs from backupnvram2logs_on_reboot"
 	    copy_onboardlogs "$TarFolder"
@@ -1445,17 +1404,6 @@ backupnvram2logs_on_reboot()
         echo "tar logs from backupnvram2logs_on_reboot"
 	    tar -X $PATTERN_FILE -cvzf $MAC"_Logs_$dt.tgz" $TarFolder
     fi
-
-	# Record upload attempt with size info for tracking
-	local tar_file_size_kb=0
-	local tar_file=$(ls -1 "$destn"/*.tgz 2>/dev/null | head -1)
-	if [ -n "$tar_file" ] && [ -f "$tar_file" ]; then
-	    tar_file_size_kb=$(du -sk "$tar_file" 2>/dev/null | awk '{print $1}')
-	    tar_file_size_kb=${tar_file_size_kb:-0}
-	fi
-	log_upload_record_attempt "$original_log_size_kb" "$tar_file_size_kb"
-	echo_t "LOG_UPLOAD_STATS: Prepared reboot upload - Original: ${original_log_size_kb}KB, Tar: ${tar_file_size_kb}KB"
-
 	rm $PATTERN_FILE
 	
 	rm -rf $TarFolder*.txt*
