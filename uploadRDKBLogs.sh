@@ -671,6 +671,10 @@ HttpLogUpload()
             if [ "$http_code" = "200" ];then
                 echo_t "LOGS UPLOADED SUCCESSFULLY, RETURN CODE: $http_code"
 		t2CountNotify "SYS_INFO_LOGS_UPLOADED"
+                # Increment nvram2 upload counter if upload was from nvram2
+                if [ "$nvram2Backup" = "true" ]; then
+                    increment_nvram2_upload_count
+                fi
                 rm -rf $UploadFile
 		if [ -f "$PRESERVE_LOG_PATH/$UploadFile" ] && [ "$UploadPath" != "$PRESERVE_LOG_PATH" ]; then #Remove from backup.
 		   rm -rf "$PRESERVE_LOG_PATH/$UploadFile"
@@ -805,6 +809,10 @@ HttpLogUpload()
                 if [ "$http_code" = "200" ];then
                     echo_t "LOGS UPLOADED SUCCESSFULLY, RETURN CODE: $http_code"
 		    t2CountNotify "SYS_INFO_LOGS_UPLOADED"
+                    # Increment nvram2 upload counter if upload was from nvram2
+                    if [ "$nvram2Backup" = "true" ]; then
+                        increment_nvram2_upload_count
+                    fi
                     result=0
                     rm -rf $UploadFile
                     if [ -f "$PRESERVE_LOG_PATH/$UploadFile" ] && [ "$UploadPath" != "$PRESERVE_LOG_PATH" ]; then #Remove from backup.

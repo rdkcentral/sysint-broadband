@@ -61,6 +61,45 @@ DCA_COMPLETED="/tmp/.dca_done"
 PING_PATH="/usr/sbin"
 ARM_LOGS_NVRAM2="/nvram2/logs/ArmConsolelog.txt.0"
 
+# Counter file to track number of log uploads from nvram2
+NVRAM2_UPLOAD_COUNT_FILE="/nvram2/.log_upload_count"
+
+# Function to increment the nvram2 log upload count
+increment_nvram2_upload_count()
+{
+    local current_count=0
+    if [ -f "$NVRAM2_UPLOAD_COUNT_FILE" ]; then
+        current_count=$(cat "$NVRAM2_UPLOAD_COUNT_FILE" 2>/dev/null)
+        # Validate that current_count is a number
+        if ! echo "$current_count" | grep -q "^[0-9]*$"; then
+            current_count=0
+        fi
+    fi
+    current_count=$((current_count + 1))
+    echo "$current_count" > "$NVRAM2_UPLOAD_COUNT_FILE"
+    echo_t "NVRAM2_UPLOAD_COUNT: Log upload from nvram2 successful. Total uploads: $current_count"
+}
+
+# Function to get the current nvram2 log upload count
+get_nvram2_upload_count()
+{
+    local count=0
+    if [ -f "$NVRAM2_UPLOAD_COUNT_FILE" ]; then
+        count=$(cat "$NVRAM2_UPLOAD_COUNT_FILE" 2>/dev/null)
+        if ! echo "$count" | grep -q "^[0-9]*$"; then
+            count=0
+        fi
+    fi
+    echo "$count"
+}
+
+# Function to reset the nvram2 log upload count
+reset_nvram2_upload_count()
+{
+    echo "0" > "$NVRAM2_UPLOAD_COUNT_FILE"
+    echo_t "NVRAM2_UPLOAD_COUNT: Upload count reset to 0"
+}
+
 MAC=`getMacAddressOnly`
 HOST_IP=`getIPAddress`
 dt=`date "+%m-%d-%y-%I-%M%p"`
