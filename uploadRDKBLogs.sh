@@ -553,15 +553,7 @@ HttpLogUpload()
     for UploadFile in $file_list
     do
         echo_t "Upload file is : $UploadFile"
-
-        # Track upload attempt - record tar file size before upload
-        local upload_file_size_kb=0
-        if [ -f "$UploadFile" ]; then
-            upload_file_size_kb=$(du -sk "$UploadFile" 2>/dev/null | awk '{print $1}')
-            upload_file_size_kb=${upload_file_size_kb:-0}
-        fi
-        log_upload_record_attempt "0" "$upload_file_size_kb"
-        echo_t "LOG_UPLOAD_STATS: Starting upload - File: $UploadFile, Size: ${upload_file_size_kb}KB"
+#        CURL_CMD="nice -n 20 $CURL_BIN --tlsv1.2 -w '%{http_code}\n' -d \"filename=$UploadFile\" -o \"$OutputFile\" --interface $WAN_INTERFACE $addr_type \"$S3_URL\" --connect-timeout 30 -m 30"
 
         echo_t "File to be uploaded: $UploadFile"
         UPTIME=`uptime`
