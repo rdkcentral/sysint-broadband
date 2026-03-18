@@ -599,8 +599,8 @@ if [ "x$T2_ENABLE" == "xtrue" ]; then
             # Add sleep to avoid Race conditions from webconfig. 
             sleep 15 
 
-            ReportProfiles=$(rbuscli get Device.X_RDKCENTRAL-COM_T2.ReportProfiles | grep "Value" | cut -d':' -f2- | sed 's/^ //' | head -n1)
-            MsgPackProfiles=$(rbuscli get Device.X_RDKCENTRAL-COM_T2.ReportProfilesMsgPack | grep "Value" | cut -d':' -f2- | sed 's/^ //' | head -n1)
+            ReportProfiles=$(rbuscli get Device.X_RDKCENTRAL-COM_T2.ReportProfiles | grep "Value" | cut -d':' -f2- | sed 's/^ //' | head -n1 | tr -d '\r')
+            MsgPackProfiles=$(rbuscli get Device.X_RDKCENTRAL-COM_T2.ReportProfilesMsgPack | grep "Value" | cut -d':' -f2- | sed 's/^ //' | head -n1 | tr -d '\r')
 
             if [ -z "$ReportProfiles" ] && [ -z "$MsgPackProfiles" ]; then
                 ReportProfiles=`cat /etc/Default_T2_ReportProfile.json`
