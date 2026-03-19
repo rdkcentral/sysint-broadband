@@ -663,6 +663,17 @@ suppress_logs_inline()
     echo_t "Size reduced: ${size_diff} KB (${percent_reduced}% reduction)"
 }
 
+# clear_suppress_offsets
+#   Clears all suppression offset files. Call this after logs are uploaded
+#   to cloud and cleared, so next sync starts fresh.
+clear_suppress_offsets()
+{
+    if [ -d "$SUPPRESS_OFFSET_DIR" ]; then
+        rm -rf "$SUPPRESS_OFFSET_DIR"/*
+        echo_t "Cleared suppression offsets after log upload"
+    fi
+}
+
 
 log_file_append_logs()
 {
@@ -1115,6 +1126,9 @@ backupnvram2logs()
 		>$fname;
 	done
 
+	# Clear suppression offsets since logs are cleared after upload
+	clear_suppress_offsets
+
         echo_t "[DEBUG] --OUT function backupnvram2logs" >> /rdklogs/logs/telemetry2_0.txt.0
         echo_t "[DEBUG] --OUT function backupnvram2logs"
 	cd $workDir
@@ -1212,6 +1226,9 @@ backupnvram2logs_on_reboot()
 		rm -rf $TarFolder$WIRELESS_CFG_FILE
 	fi
 
+	# Clear suppression offsets since logs are cleared after upload
+	clear_suppress_offsets
+
 	if [ "$BOX_TYPE" = "XB3" ]
 	then
 		echo_t "RDK_LOGGER: keeping the tar file in tmp for xb3. "
@@ -1306,6 +1323,10 @@ backupAllLogs()
 	do
 		$operation $source$fname $dt; >$source$fname;
 	done
+
+	# Clear suppression offsets since logs are cleared
+	clear_suppress_offsets
+
 	cp /version.txt $dt
         if [ "$MODEL_NUM" = "CGM4981COM" ] || [ "${MODEL_NUM}" = "CGM601TCOM" ] || [ "${MODEL_NUM}" = "SG417DBCT" ] || [ "${MODEL_NUM}" = "CWA438TCOM" ] || [ "$MODEL_NUM" == "SR213" ]; then		
               cp $SE05x_tmp_logs $dt$SE05x_rdk_logs
