@@ -277,22 +277,51 @@ log_file_update_offset()
 # These functions analyze log content and suppress repeated patterns
 # to reduce log size during sync to nvram2
 # Suppression is applied AFTER logs are synced to nvram2.
+# Uses incremental processing - only suppresses new lines since last run.
 # ------------------------------------------------------------
 
-# suppress_log_file_inline <file>
+SUPPRESS_OFFSET_DIR="/nvram2/logs/.suppress_offsets"
+
+# suppress_log_file_inline <file> [start_line]
 #   Processes a single file in-place through AWK-based suppression.
+#   If start_line is provided, only processes lines from that point.
 #   Detects single-line and multi-line repeating patterns.
+#   Returns: "lines_processed new_lines" via stdout for caller to capture.
 suppress_log_file_inline()
 {
     local INPUT_FILE="$1"
+    local START_LINE="${2:-1}"
     local TEMP_FILE="${INPUT_FILE}.suppress.tmp"
 
-    awk '
+    # Get total line count
+    local total_lines
+    total_lines=$(wc -l < "$INPUT_FILE" 2>/dev/null)
+    if [ -z "$total_lines" ] || [ "$total_lines" -eq 0 ]; then
+        echo "0 0"
+        return
+    fi
+
+    # If start_line is beyond file, nothing new to process
+    if [ "$START_LINE" -gt "$total_lines" ]; then
+        echo "$START_LINE 0"
+        return
+    fi
+
+    local new_lines=$((total_lines - START_LINE + 1))
+
+    awk -v start_line="$START_LINE" '
 BEGIN {
     idx = 0
+    prefix_count = 0
 }
 
 {
+    # Lines before start_line are prefix - keep as-is
+    if (NR < start_line) {
+        prefix[++prefix_count] = $0
+        next
+    }
+
     # Skip empty lines
     if (length($0) == 0 || $0 ~ /^[[:space:]]*$/) {
         next
@@ -390,6 +419,11 @@ BEGIN {
 }
 
 END {
+    # First output all prefix lines unchanged
+    for (p = 1; p <= prefix_count; p++) {
+        print prefix[p]
+    }
+
     i = 1
     while (i <= idx) {
         found = 0
@@ -483,12 +517,18 @@ END {
     if [ -f "$TEMP_FILE" ]; then
         mv "$TEMP_FILE" "$INPUT_FILE"
     fi
+
+    # Return the new line count for offset tracking
+    local final_lines
+    final_lines=$(wc -l < "$INPUT_FILE" 2>/dev/null)
+    echo "$START_LINE $new_lines $final_lines"
 }
 
 # suppress_logs_inline <directory>
 #   Iterates all files in <directory>, skips binaries/archives and
 #   pure numeric offset-marker files, calls suppress_log_file_inline()
-#   on each eligible file. Reports before/after sizes via echo_t.
+#   Tracks lines already processed per file for incremental suppression.
+#   Reports per-file stats and before/after sizes via echo_t.
 suppress_logs_inline()
 {
     local dir="$1"
@@ -496,6 +536,11 @@ suppress_logs_inline()
     local total=0
     local size_before=0
     local size_after=0
+
+    # Ensure offset tracking directory exists
+    if [ ! -d "$SUPPRESS_OFFSET_DIR" ]; then
+        mkdir -p "$SUPPRESS_OFFSET_DIR"
+    fi
 
     # Calculate total size before suppression
     size_before=$(du -sk "$dir" 2>/dev/null | awk '{print $1}')
@@ -510,7 +555,7 @@ suppress_logs_inline()
         fi
     done
 
-    echo_t "Starting log suppression: Processing $total file(s) from $dir"
+    echo_t "Starting incremental log suppression: $total file(s) in $dir"
     echo_t "Size before suppression: ${size_before} KB"
 
     for file in "$dir"/*; do
@@ -526,6 +571,13 @@ suppress_logs_inline()
                 ;;
         esac
 
+        # Skip offset tracking directory
+        case "$file" in
+            */.suppress_offsets|*/.suppress_offsets/*)
+                continue
+                ;;
+        esac
+
         # Skip files that are just offset markers (first line is just a number)
         first_line=$(head -n 1 "$file" 2>/dev/null)
         line_count=$(wc -l < "$file" 2>/dev/null)
@@ -533,7 +585,56 @@ suppress_logs_inline()
             continue
         fi
 
-        suppress_log_file_inline "$file"
+        # Get basename for offset tracking
+        local basename
+        basename=$(basename "$file")
+        local offset_file="$SUPPRESS_OFFSET_DIR/$basename.offset"
+
+        # Read last processed line count (default to 1 if not tracked)
+        local last_processed=1
+        if [ -f "$offset_file" ]; then
+            last_processed=$(cat "$offset_file" 2>/dev/null)
+            if ! echo "$last_processed" | grep -q "^[0-9]*$"; then
+                last_processed=1
+            fi
+        fi
+
+        # Get current line count
+        local current_lines
+        current_lines=$(wc -l < "$file" 2>/dev/null)
+        if [ -z "$current_lines" ]; then
+            current_lines=0
+        fi
+
+        # Calculate new lines since last processing
+        local new_lines=0
+        if [ "$current_lines" -gt "$last_processed" ]; then
+            new_lines=$((current_lines - last_processed))
+        elif [ "$current_lines" -lt "$last_processed" ]; then
+            # File was rotated/truncated, process from beginning
+            last_processed=1
+            new_lines=$((current_lines - 1))
+            if [ "$new_lines" -lt 0 ]; then
+                new_lines=0
+            fi
+        fi
+
+        # Skip if no new lines
+        if [ "$new_lines" -le 0 ]; then
+            continue
+        fi
+
+        # Process the file starting from last_processed + 1
+        local start_line=$((last_processed + 1))
+        suppress_log_file_inline "$file" "$start_line" > /dev/null 2>&1
+
+        # Update offset to current line count after suppression
+        local final_lines
+        final_lines=$(wc -l < "$file" 2>/dev/null)
+        echo "$final_lines" > "$offset_file"
+
+        # Log per-file stats
+        echo_t "  [suppress] $basename: $last_processed lines already processed, $new_lines new line(s)"
         processed=$((processed + 1))
     done
 
@@ -551,7 +652,7 @@ suppress_logs_inline()
         percent_reduced=0
     fi
 
-    echo_t "Log suppression completed: Processed $processed/$total files"
+    echo_t "Incremental suppression done: $processed/$total files processed"
     echo_t "Size after suppression: ${size_after} KB"
     echo_t "Size reduced: ${size_diff} KB (${percent_reduced}% reduction)"
 }
@@ -694,8 +795,8 @@ syncLogs_nvram2()
     log_files_sync_to_nvram2 $option
 
     # Suppress repeated logs after syncing to nvram2.
-    # Uses fully inlined suppress functions.
-    echo_t "Analysing and suppressing repeated logs in nvram2"
+    # Uses incremental processing - only new lines since last suppression.
+    echo_t "Analysing and suppressing repeated logs in nvram2 (incremental)"
     suppress_logs_inline $LOG_SYNC_PATH
 
     if [ -f /tmp/backup_onboardlogs ]; then
