@@ -278,9 +278,15 @@ log_file_update_offset()
 # to reduce log size during sync to nvram2
 # Suppression is applied AFTER logs are synced to nvram2.
 # Uses incremental processing - only suppresses new lines since last run.
+#
+# Enable/Disable:
+#   touch /nvram2/.log_suppression_enabled   -> Enable suppression
+#   rm /nvram2/.log_suppression_enabled      -> Disable suppression
+# Default: Enabled (file created on first sync)
 # ------------------------------------------------------------
 
-SUPPRESS_OFFSET_DIR="/nvram2/logs/.suppress_offsets"
+SUPPRESS_OFFSET_DIR="/nvram2/.suppress_offsets"
+SUPPRESS_ENABLE_FILE="/nvram2/.log_suppression_enabled"
 
 # suppress_log_file_inline <file> [start_line]
 #   Processes a single file in-place through AWK-based suppression.
@@ -794,10 +800,20 @@ syncLogs_nvram2()
 
     log_files_sync_to_nvram2 $option
 
-    # Suppress repeated logs after syncing to nvram2.
-    # Uses incremental processing - only new lines since last suppression.
-    echo_t "Analysing and suppressing repeated logs in nvram2 (incremental)"
-    suppress_logs_inline $LOG_SYNC_PATH
+    # Log suppression - enabled by default, can be toggled via touch file
+    # Enable:  touch /nvram2/.log_suppression_enabled
+    # Disable: rm /nvram2/.log_suppression_enabled
+    if [ ! -f "$SUPPRESS_ENABLE_FILE" ]; then
+        # Create enable file on first run (default: enabled)
+        touch "$SUPPRESS_ENABLE_FILE"
+    fi
+
+    if [ -f "$SUPPRESS_ENABLE_FILE" ]; then
+        echo_t "Analysing and suppressing repeated logs in nvram2 (incremental)"
+        suppress_logs_inline $LOG_SYNC_PATH
+    else
+        echo_t "Log suppression disabled (enable: touch $SUPPRESS_ENABLE_FILE)"
+    fi
 
     if [ -f /tmp/backup_onboardlogs ]; then
         backup_onboarding_logs
