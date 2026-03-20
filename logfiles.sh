@@ -287,6 +287,7 @@ log_file_update_offset()
 
 SUPPRESS_OFFSET_DIR="/nvram2/.suppress_offsets"
 SUPPRESS_ENABLE_FILE="/nvram2/.log_suppression_enabled"
+SUPPRESS_STATS_FILE="/nvram2/.suppress_stats.log"
 
 # suppress_log_file_slice <input_file> <output_file> [append_mode]
 #   Suppresses repeated patterns in input_file and writes to output_file.
@@ -669,6 +670,11 @@ suppress_logs_inline()
     echo_t "Incremental suppression done: $processed/$total files processed"
     echo_t "Size after suppression: ${size_after} KB"
     echo_t "Size reduced: ${size_diff} KB (${percent_reduced}% reduction)"
+
+    # Append stats to persistent file (survives reboots)
+    local timestamp
+    timestamp=$(date "+%y%m%d-%H:%M:%S")
+    echo "$timestamp | files:$processed/$total | before:${size_before}KB | after:${size_after}KB | reduced:${size_diff}KB (${percent_reduced}%)" >> "$SUPPRESS_STATS_FILE"
 }
 
 # clear_suppress_offsets
