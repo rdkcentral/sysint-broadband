@@ -639,13 +639,13 @@ suppress_logs_inline()
         # Cleanup temp files
         rm -f "$slice_file" "$suppressed_file" 2>/dev/null
 
-        # Update offset to current line count (before suppression, from source)
-        # This tracks where we were in the SOURCE file, not the output
-        echo "$current_lines" > "$offset_file"
-
         # Get final line count after suppression
         local final_lines
         final_lines=$(wc -l < "$file" 2>/dev/null)
+
+        # Update offset to FINAL line count (after suppression)
+        # This ensures next run correctly identifies new lines appended after this point
+        echo "$final_lines" > "$offset_file"
 
         # Log per-file stats
         echo_t "  [suppress] $basename: $last_processed lines kept, $new_lines new -> $final_lines total"
