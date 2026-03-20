@@ -463,10 +463,13 @@ END {
             }
         }
 
-        # If not single line repetition, try multi-line patterns (2 lines up to N lines)
+        # If not single line repetition, try multi-line patterns (2 lines up to n lines)
+        # Dynamically detect pattern length based on remaining lines
         if (!found) {
-            max_pattern_len = 10
-            if (idx - i < max_pattern_len) max_pattern_len = idx - i
+            remaining = idx - i + 1
+            # Max pattern length is half of remaining lines (need at least 2 occurrences)
+            max_pattern_len = int(remaining / 2)
+            if (max_pattern_len < 2) max_pattern_len = 2
 
             for (plen = 2; plen <= max_pattern_len && !found; plen++) {
                 if (i + plen > idx) continue
@@ -596,12 +599,12 @@ suppress_logs_inline()
         basename=$(basename "$file")
         local offset_file="$SUPPRESS_OFFSET_DIR/$basename.offset"
 
-        # Read last processed line count (default to 1 if not tracked)
-        local last_processed=1
+        # Read last processed line count (default to 0 if not tracked - first run)
+        local last_processed=0
         if [ -f "$offset_file" ]; then
             last_processed=$(cat "$offset_file" 2>/dev/null)
             if ! echo "$last_processed" | grep -q "^[0-9]*$"; then
-                last_processed=1
+                last_processed=0
             fi
         fi
 
@@ -618,11 +621,8 @@ suppress_logs_inline()
             new_lines=$((current_lines - last_processed))
         elif [ "$current_lines" -lt "$last_processed" ]; then
             # File was rotated/truncated, process from beginning
-            last_processed=1
-            new_lines=$((current_lines - 1))
-            if [ "$new_lines" -lt 0 ]; then
-                new_lines=0
-            fi
+            last_processed=0
+            new_lines=$current_lines
         fi
 
         # Skip if no new lines
