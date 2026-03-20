@@ -288,46 +288,23 @@ log_file_update_offset()
 SUPPRESS_OFFSET_DIR="/nvram2/.suppress_offsets"
 SUPPRESS_ENABLE_FILE="/nvram2/.log_suppression_enabled"
 
-# suppress_log_file_inline <file> [start_line]
-#   Processes a single file in-place through AWK-based suppression.
-#   If start_line is provided, only processes lines from that point.
-#   Detects single-line and multi-line repeating patterns.
-#   Returns: "lines_processed new_lines" via stdout for caller to capture.
-suppress_log_file_inline()
+# suppress_log_file_slice <input_file> <output_file> [append_mode]
+#   Suppresses repeated patterns in input_file and writes to output_file.
+#   If append_mode=1, appends to output_file; otherwise overwrites.
+#   Used for incremental suppression of new log lines only.
+suppress_log_file_slice()
 {
     local INPUT_FILE="$1"
-    local START_LINE="${2:-1}"
-    local TEMP_FILE="${INPUT_FILE}.suppress.tmp"
+    local OUTPUT_FILE="$2"
+    local APPEND_MODE="${3:-0}"
+    local TEMP_FILE="${OUTPUT_FILE}.suppress.tmp"
 
-    # Get total line count
-    local total_lines
-    total_lines=$(wc -l < "$INPUT_FILE" 2>/dev/null)
-    if [ -z "$total_lines" ] || [ "$total_lines" -eq 0 ]; then
-        echo "0 0"
-        return
-    fi
-
-    # If start_line is beyond file, nothing new to process
-    if [ "$START_LINE" -gt "$total_lines" ]; then
-        echo "$START_LINE 0"
-        return
-    fi
-
-    local new_lines=$((total_lines - START_LINE + 1))
-
-    awk -v start_line="$START_LINE" '
+    awk '
 BEGIN {
     idx = 0
-    prefix_count = 0
 }
 
 {
-    # Lines before start_line are prefix - keep as-is
-    if (NR < start_line) {
-        prefix[++prefix_count] = $0
-        next
-    }
-
     # Skip empty lines
     if (length($0) == 0 || $0 ~ /^[[:space:]]*$/) {
         next
@@ -425,11 +402,6 @@ BEGIN {
 }
 
 END {
-    # First output all prefix lines unchanged
-    for (p = 1; p <= prefix_count; p++) {
-        print prefix[p]
-    }
-
     i = 1
     while (i <= idx) {
         found = 0
@@ -463,11 +435,10 @@ END {
             }
         }
 
-        # If not single line repetition, try multi-line patterns (2 lines up to n lines)
-        # Dynamically detect pattern length based on remaining lines
+        # If not single line repetition, try multi-line patterns (2 to n lines)
+        # Dynamic: max pattern = half of remaining lines (need at least 2 occurrences)
         if (!found) {
             remaining = idx - i + 1
-            # Max pattern length is half of remaining lines (need at least 2 occurrences)
             max_pattern_len = int(remaining / 2)
             if (max_pattern_len < 2) max_pattern_len = 2
 
@@ -522,21 +493,30 @@ END {
 }
 ' "$INPUT_FILE" > "$TEMP_FILE"
 
-    # Move temp file back to original (in-place suppression)
+    # Append or overwrite output file
     if [ -f "$TEMP_FILE" ]; then
-        mv "$TEMP_FILE" "$INPUT_FILE"
+        if [ "$APPEND_MODE" -eq 1 ]; then
+            cat "$TEMP_FILE" >> "$OUTPUT_FILE"
+        else
+            mv "$TEMP_FILE" "$OUTPUT_FILE"
+            return
+        fi
+        rm -f "$TEMP_FILE"
     fi
-
-    # Return the new line count for offset tracking
-    local final_lines
-    final_lines=$(wc -l < "$INPUT_FILE" 2>/dev/null)
-    echo "$START_LINE $new_lines $final_lines"
 }
 
 # suppress_logs_inline <directory>
-#   Iterates all files in <directory>, skips binaries/archives and
-#   pure numeric offset-marker files, calls suppress_log_file_inline()
-#   Tracks lines already processed per file for incremental suppression.
+#   Iterates all files in <directory>, extracts only NEW lines since last run,
+#   suppresses repeating patterns in those new lines, and appends result.
+#   This is efficient: only processes new lines, not entire file.
+#
+#   SLICE+APPEND APPROACH (efficient):
+#   1. Extract only new lines with: tail -n +$start_line > slice.tmp
+#   2. Suppress the slice: suppress_log_file_slice slice.tmp suppressed.tmp
+#   3. Truncate original to offset: head -n $offset > truncated.tmp
+#   4. Append suppressed: cat suppressed.tmp >> truncated.tmp
+#   5. Move back: mv truncated.tmp original
+#
 #   Reports per-file stats and before/after sizes via echo_t.
 suppress_logs_inline()
 {
@@ -575,7 +555,7 @@ suppress_logs_inline()
 
         # Skip tar files and other binary files
         case "$file" in
-            *.tgz|*.tar|*.gz|*.bin|*.core|*.suppress.tmp)
+            *.tgz|*.tar|*.gz|*.bin|*.core|*.suppress.tmp|*.slice.tmp)
                 continue
                 ;;
         esac
@@ -630,17 +610,45 @@ suppress_logs_inline()
             continue
         fi
 
-        # Process the file starting from last_processed + 1
+        # SLICE+APPEND: Extract only new lines, suppress, append back
         local start_line=$((last_processed + 1))
-        suppress_log_file_inline "$file" "$start_line" > /dev/null 2>&1
+        local slice_file="${file}.slice.tmp"
+        local suppressed_file="${file}.suppressed.tmp"
+        local truncated_file="${file}.truncated.tmp"
 
-        # Update offset to current line count after suppression
+        # Step 1: Extract new lines to a slice file
+        tail -n +"$start_line" "$file" > "$slice_file" 2>/dev/null
+
+        # Step 2: Suppress patterns in the slice
+        suppress_log_file_slice "$slice_file" "$suppressed_file" 0
+
+        # Step 3: Truncate original file to keep only previously processed lines
+        if [ "$last_processed" -gt 0 ]; then
+            head -n "$last_processed" "$file" > "$truncated_file" 2>/dev/null
+        else
+            # First run - start fresh
+            : > "$truncated_file"
+        fi
+
+        # Step 4: Append suppressed content
+        cat "$suppressed_file" >> "$truncated_file" 2>/dev/null
+
+        # Step 5: Replace original with result
+        mv "$truncated_file" "$file" 2>/dev/null
+
+        # Cleanup temp files
+        rm -f "$slice_file" "$suppressed_file" 2>/dev/null
+
+        # Update offset to current line count (before suppression, from source)
+        # This tracks where we were in the SOURCE file, not the output
+        echo "$current_lines" > "$offset_file"
+
+        # Get final line count after suppression
         local final_lines
         final_lines=$(wc -l < "$file" 2>/dev/null)
-        echo "$final_lines" > "$offset_file"
 
         # Log per-file stats
-        echo_t "  [suppress] $basename: $last_processed lines already processed, $new_lines new line(s)"
+        echo_t "  [suppress] $basename: $last_processed lines kept, $new_lines new -> $final_lines total"
         processed=$((processed + 1))
     done
 
