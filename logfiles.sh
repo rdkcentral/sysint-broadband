@@ -1134,12 +1134,12 @@ backupnvram2logs()
                 echo "tar activation logs from backupnvram2logs"
                 copy_onboardlogs "$LOG_SYNC_PATH"
                 tar -X $PATTERN_FILE -cvzf $MAC"_Logs_"$dt"_activation_log.tgz" $LOG_SYNC_PATH
-                log_upload_stats "$destn/$MAC"_Logs_"$dt"_activation_log.tgz" "backupnvram2logs"
+                log_upload_stats "${destn}/${MAC}_Logs_${dt}_activation_log.tgz" "backupnvram2logs"
                 rm -rf /tmp/backup_onboardlogs
             else
                 echo "tar logs from backupnvram2logs"
 	            tar -X $PATTERN_FILE -cvzf $MAC"_Logs_$dt.tgz" $LOG_SYNC_PATH
-	            log_upload_stats "$destn/$MAC"_Logs_$dt.tgz" "backupnvram2logs"
+	            log_upload_stats "${destn}/${MAC}_Logs_${dt}.tgz" "backupnvram2logs"
 	        fi
         fi
 
@@ -1244,12 +1244,12 @@ backupnvram2logs_on_reboot()
 	    echo "tar activation logs from backupnvram2logs_on_reboot"
 	    copy_onboardlogs "$TarFolder"
 	    tar -X $PATTERN_FILE -cvzf $MAC"_Logs_"$dt"_activation_log.tgz" $TarFolder
-	    log_upload_stats "$destn/$MAC"_Logs_"$dt"_activation_log.tgz" "backupnvram2logs_on_reboot"
+	    log_upload_stats "${destn}/${MAC}_Logs_${dt}_activation_log.tgz" "backupnvram2logs_on_reboot"
 	    rm -rf /tmp/backup_onboardlogs
     else
         echo "tar logs from backupnvram2logs_on_reboot"
 	    tar -X $PATTERN_FILE -cvzf $MAC"_Logs_$dt.tgz" $TarFolder
-	    log_upload_stats "$destn/$MAC"_Logs_$dt.tgz" "backupnvram2logs_on_reboot"
+	    log_upload_stats "${destn}/${MAC}_Logs_${dt}.tgz" "backupnvram2logs_on_reboot"
     fi
 	rm $PATTERN_FILE
 	
@@ -1387,12 +1387,12 @@ backupAllLogs()
 	    echo "tar activation logs from backupAllLogs"
 	    copy_onboardlogs "$dt"
 	    tar -X $PATTERN_FILE -cvzf $MAC"_Logs_"$dt"activation_log.tgz" $dt
-	    log_upload_stats "$destn/$MAC"_Logs_"$dt"activation_log.tgz" "backupAllLogs"
+	    log_upload_stats "${destn}/${MAC}_Logs_${dt}activation_log.tgz" "backupAllLogs"
 	    rm -rf /tmp/backup_onboardlogs
 	else
 	    echo "tar logs from backupAllLogs"
 	    tar -X $PATTERN_FILE -cvzf $MAC"_Logs_$dt.tgz" $dt
-	    log_upload_stats "$destn/$MAC"_Logs_$dt.tgz" "backupAllLogs"
+	    log_upload_stats "${destn}/${MAC}_Logs_${dt}.tgz" "backupAllLogs"
     fi
 	rm $PATTERN_FILE
  	rm -rf $dt
