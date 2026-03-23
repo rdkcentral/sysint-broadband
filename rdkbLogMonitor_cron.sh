@@ -85,7 +85,6 @@ BOOT_PROCESSING_DONE="$RDKB_LOGMON_TMP_DIR/.boot_processing_done"
 CRON_INITIALIZED_FLAG="$RDKB_LOGMON_TMP_DIR/.cron_initialized"
 DELAY_COUNTDOWN_FILE="$RDKB_LOGMON_TMP_DIR/.delay_countdown"
 PROCESS_HEARTBEAT="$RDKB_LOGMON_TMP_DIR/.process_heartbeat"
-UPLOAD_SCHEDULE_FILE="$RDKB_LOGMON_TMP_DIR/.upload_schedule"
 ARCHIVE_READY_FLAG="$RDKB_LOGMON_TMP_DIR/.archive_ready"
 REBOOT_WORKFLOW_DONE="$RDKB_LOGMON_TMP_DIR/.reboot_workflow_done"
 BOOT_ARCHIVE_DONE="$RDKB_LOGMON_TMP_DIR/.boot_archive_done"
@@ -151,9 +150,6 @@ random_sleep()
 	    if [ ! -f "$DELAY_COUNTDOWN_FILE" ]; then
             generate_random_sleep
             echo "$RANDOM_SLEEP" > "$DELAY_COUNTDOWN_FILE"
-            echo_t "rdkbLogMonitor: Initial random delay stored: $RANDOM_SLEEP seconds" >> "$UPLOAD_SCHEDULE_FILE"
-        else
-            echo_t "rdkbLogMonitor: Random already generated, reusing existing value" >> "$UPLOAD_SCHEDULE_FILE"
         fi
 		
         if [ -f "$PROCESS_HEARTBEAT" ]; then
@@ -167,21 +163,16 @@ random_sleep()
             [ -z "$remaining" ] && remaining=0
 
             if [ "$remaining" -le 300 ]; then
-				echo_t "rdkbLogMonitor: Sleeping $remaining seconds now" >> "$UPLOAD_SCHEDULE_FILE"
 				rm -f "$PROCESS_HEARTBEAT"
 				delay_completed=1
 				[ "$remaining" -gt 0 ] && sleep "$remaining"
             else
-                echo_t "rdkbLogMonitor: Remaining sleep before completion: $remaining seconds" >> "$UPLOAD_SCHEDULE_FILE"
                 new_remaining=$((remaining - 300))
                 if [ "$new_remaining" -lt 0 ]; then
                     new_remaining=0
                 fi
                 echo $new_remaining > "$DELAY_COUNTDOWN_FILE"
-                echo_t "rdkbLogMonitor: Updated remaining sleep to $new_remaining seconds, exiting" >> "$UPLOAD_SCHEDULE_FILE"
             fi
-        else
-            echo_t "rdkbLogMonitor: Skipping this minute (tick=$current_tick/4)" >> "$UPLOAD_SCHEDULE_FILE"
         fi
 
 		if [ "$delay_completed" != "1" ]; then
@@ -191,7 +182,6 @@ random_sleep()
 		fi
     else
 	    generate_random_sleep
-        echo_t "rdkbLogMonitor: Sleeping for $RANDOM_SLEEP seconds" >> "$UPLOAD_SCHEDULE_FILE"
         sleep $RANDOM_SLEEP
     fi
 }
@@ -579,10 +569,9 @@ bootup_upload_on_reboot()
 			if [ -f "$DELAY_COUNTDOWN_FILE" ]; then
 					random_sleep
 					if [ $? -eq 0 ] && [ -f "$PROCESS_HEARTBEAT" ]; then
-						echo_t "Random sleep incomplete bootup_upload_on_reboot in next cron" >> "$UPLOAD_SCHEDULE_FILE"
 						return 0
 					fi
-				echo_t "Random sleep completed" >> "$UPLOAD_SCHEDULE_FILE"
+
 				rm -f "$DELAY_COUNTDOWN_FILE"
 				if [ "$fileToUpload" != "" ]; then
 					$RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "true" "" $TMP_LOG_UPLOAD_PATH "true"
@@ -593,7 +582,6 @@ bootup_upload_on_reboot()
 				if [ "$fileToUpload" != "" ]; then
 					random_sleep
 					if [ $? -eq 0 ]&& [ -f "$PROCESS_HEARTBEAT" ]; then
-						echo_t "Random sleep incomplete file_bootup_upload_on_reboot - next cron" >> "$UPLOAD_SCHEDULE_FILE"
 						return 0
 					fi
 					$RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "true" "" $TMP_LOG_UPLOAD_PATH "true"
@@ -691,14 +679,11 @@ tar_bootup_upload()
 		fi
 
 		if [ -f "$DELAY_COUNTDOWN_FILE" ]; then
-			echo_t "bootup_upload_tar_bootup: Resuming random_sleep" >> "$UPLOAD_SCHEDULE_FILE"
 			random_sleep
 			if [ $? -eq 0 ] && [ -f "$PROCESS_HEARTBEAT" ]; then
-				echo_t "Random sleep incomplete upload logs in next cron" >> "$UPLOAD_SCHEDULE_FILE"
 				return 0
 			fi
 			rm -f "$DELAY_COUNTDOWN_FILE"
-			echo_t "Random sleep completed" >> "$UPLOAD_SCHEDULE_FILE"
 
 			if [ "$UPLOADED_AFTER_REBOOT" == "true" ]; then
 				$RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "false" "" $TMP_LOG_UPLOAD_PATH "true"
@@ -731,7 +716,6 @@ EOF
 				if [ "$UPLOADED_AFTER_REBOOT" == "true" ]; then
 					random_sleep
 					if [ $? -eq 0 ] && [ -f "$PROCESS_HEARTBEAT" ]; then
-						echo_t "Random sleep incomplete upload logs in next cron" >> "$UPLOAD_SCHEDULE_FILE"
 						return 0
 					fi
 					$RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "false" "" $TMP_LOG_UPLOAD_PATH "true"
@@ -750,7 +734,6 @@ EOF
 					if [ "$files_exist_in_preserve" == "true" ]; then
 						random_sleep
 						if [ $? -eq 0 ] && [ -f "$PROCESS_HEARTBEAT" ]; then
-							echo_t "Random sleep incomplete upload preserve log in next cron" >> "$UPLOAD_SCHEDULE_FILE"
 							return 0
 						fi
 						echo_t "Uploading backup logs found in $PRESERVE_LOG_PATH"
@@ -758,7 +741,6 @@ EOF
 					else
 						random_sleep
 						if [ $? -eq 0 ] && [ -f "$PROCESS_HEARTBEAT" ]; then
-							echo_t "Random sleep incomplete upload non-preserve log in next cron" >> "$UPLOAD_SCHEDULE_FILE"
 							return 0
 						fi
 						$RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "false" "" $TMP_LOG_UPLOAD_PATH "true"
@@ -1257,10 +1239,6 @@ service_mode() {
 
 if [ "$execution_mode" = "cron" ]; then
     CRON_MODE=1
-    
-    if [ ! -d "$RDKB_LOGMON_TMP_DIR" ]; then
-        mkdir -p "$RDKB_LOGMON_TMP_DIR"
-    fi
 
     if [ ! -f "$CRON_INITIALIZED_FLAG" ]; then
         install_cron_entry
