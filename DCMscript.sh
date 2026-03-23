@@ -571,6 +571,31 @@ if [ ! -f $T2_0_BIN ]; then
     T2_ENABLE="false"
 fi
 
+validate_t2_profiles()
+{
+    profile_pattern="LTE_Failover_*"
+
+    # Check if any LTE_Failover file is empty
+    found_empty=false
+
+    for file in "$T2_BULK_PERSISTENT_PATH"/$profile_pattern; do
+        # Skip if no files match the pattern (glob doesn't expand)
+        [ -e "$file" ] || continue
+
+        # Check if file exists but is empty
+        if [ ! -s "$file" ]; then
+            echo_t "WARNING: Found empty LTE_Failover profile: $file" >> $DCM_LOG_FILE
+            found_empty=true
+            break
+        fi
+    done
+
+    # If any file is empty, delete all files under T2_BULK_PERSISTENT_PATH
+    if [ "$found_empty" = "true" ]; then
+        echo_t "ERROR: Deleting all LTE profiles " >> $DCM_LOG_FILE
+        rm -vf "$T2_BULK_PERSISTENT_PATH"/* >> $DCM_LOG_FILE
+    fi
+}
 
 if [ "x$T2_ENABLE" == "xtrue" ]; then
     t2Pid=`pidof $T2_0_APP`
@@ -583,6 +608,7 @@ if [ "x$T2_ENABLE" == "xtrue" ]; then
         mkdir -p $TELEMETRY_PATH
         mkdir -p $TELEMETRY_PATH_TEMP
         mkdir -p $T2_XCONF_PERSISTENT_PATH
+        validate_t2_profiles
         t2Log "Starting $T2_0_BIN daemon."
         ${T2_0_BIN}
         count=0
@@ -599,8 +625,8 @@ if [ "x$T2_ENABLE" == "xtrue" ]; then
             # Add sleep to avoid Race conditions from webconfig. 
             sleep 15 
 
-            ReportProfiles=$(rbuscli get Device.X_RDKCENTRAL-COM_T2.ReportProfiles | grep "Value" | cut -d':' -f2- | sed 's/^ //' | head -n1)
-            MsgPackProfiles=$(rbuscli get Device.X_RDKCENTRAL-COM_T2.ReportProfilesMsgPack | grep "Value" | cut -d':' -f2- | sed 's/^ //' | head -n1)
+            ReportProfiles=$(rbuscli get Device.X_RDKCENTRAL-COM_T2.ReportProfiles | grep "Value" | cut -d':' -f2- | sed 's/^ //' | head -n1 | tr -d '\r')
+            MsgPackProfiles=$(rbuscli get Device.X_RDKCENTRAL-COM_T2.ReportProfilesMsgPack | grep "Value" | cut -d':' -f2- | sed 's/^ //' | head -n1 | tr -d '\r')
 
             if [ -z "$ReportProfiles" ] && [ -z "$MsgPackProfiles" ]; then
                 ReportProfiles=`cat /etc/Default_T2_ReportProfile.json`
