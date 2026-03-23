@@ -39,7 +39,6 @@ FILEUPLOAD_TMP_DIR="/tmp/.fileupload_state"
 DELAY_REMAINING_FILE="$FILEUPLOAD_TMP_DIR/.delay_remaining_secs"
 HEARTBEAT_TICK_FILE="$FILEUPLOAD_TMP_DIR/.heartbeat_tick"
 CRON_SETUP_FLAG="$FILEUPLOAD_TMP_DIR/.cron_setup_complete"
-NEXT_UPLOAD_TIME_FILE="$FILEUPLOAD_TMP_DIR/.next_upload_timestamp"
 
 RDKLOGGER_EXECUTION_MODE="/tmp/.rdklogger_execution_mode"
 
@@ -114,9 +113,6 @@ calcRandTimeandUpload()
 	    if [ ! -f "$DELAY_REMAINING_FILE" ]; then
             generate_random_delay
             echo "$sec_to_sleep" > "$DELAY_REMAINING_FILE"
-            echo_t "fileupload_random: Initial random delay stored: $sec_to_sleep seconds" >> "$NEXT_UPLOAD_TIME_FILE"
-        else
-            echo_t "fileupload_random: Random delay already generated, reusing existing value" >> "$NEXT_UPLOAD_TIME_FILE"
         fi
 		
         if [ -f "$HEARTBEAT_TICK_FILE" ]; then
@@ -130,19 +126,15 @@ calcRandTimeandUpload()
             [ -z "$remaining" ] && remaining=0
 
             if [ "$remaining" -le 300 ]; then
-				echo_t "fileupload_random: Sleeping $remaining seconds now" >> "$NEXT_UPLOAD_TIME_FILE"
 				delay_completed=1
 				[ "$remaining" -gt 0 ] && sleep "$remaining"
             else
-                echo_t "fileupload_random: Remaining delay before upload: $remaining seconds" >> "$NEXT_UPLOAD_TIME_FILE"
                 new_remaining=$((remaining - 300))
                 if [ "$new_remaining" -lt 0 ]; then
                     new_remaining=0
                 fi
                 echo $new_remaining > "$DELAY_REMAINING_FILE"
             fi
-        else
-            echo_t "fileupload_random: Skipping countdown this minute (tick=$current_tick/4)" >> "$NEXT_UPLOAD_TIME_FILE"
         fi
 
         if [ "$delay_completed" != "1" ]; then
@@ -154,7 +146,6 @@ calcRandTimeandUpload()
 
     if [ "$CRON_MODE" != "1" ]; then
         generate_random_delay
-        echo_t "fileupload_random: Sleeping for $sec_to_sleep seconds" >> "$NEXT_UPLOAD_TIME_FILE"
         sleep $sec_to_sleep;
     fi
    
@@ -388,10 +379,6 @@ service_mode() {
 
 if [ "$execution_mode" = "cron" ]; then
     CRON_MODE=1
-
-	if [ ! -d "$FILEUPLOAD_TMP_DIR" ]; then
-        mkdir -p "$FILEUPLOAD_TMP_DIR"
-    fi
 
     if [ ! -f "$CRON_SETUP_FLAG" ]; then
         install_cron_entry
