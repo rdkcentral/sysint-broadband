@@ -241,7 +241,7 @@ upload_nvram2_logs()
 	   echo_t "File to be uploaded from is $UploadFile "
 		if [ "$UPLOADED_AFTER_REBOOT" == "true" ]
 		then
-			$RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "false"
+			$RDK_LOGGER_PATH/uploadRDKBLogs.sh "$SERVER" "HTTP" "$URL" "false"
 		else
 			while [ "$loop" = "1" ]
 			do
@@ -257,7 +257,7 @@ upload_nvram2_logs()
 			done
 			sleep 120
 			random_sleep
-			$RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "false"
+			$RDK_LOGGER_PATH/uploadRDKBLogs.sh "$SERVER" "HTTP" "$URL" "false"
 			UPLOADED_AFTER_REBOOT="true"
 		fi
 	fi
@@ -501,7 +501,7 @@ bootup_upload()
 	   then
 	   	
             random_sleep
-	      $RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "true" "" $TMP_LOG_UPLOAD_PATH "true"
+	      $RDK_LOGGER_PATH/uploadRDKBLogs.sh "$SERVER" "HTTP" "$URL" "true" "" "$TMP_LOG_UPLOAD_PATH" "true"
 	   else 
 	      echo_t "No log file found in logbackupreboot folder"
 	   fi
@@ -516,7 +516,7 @@ bootup_upload()
             then
               sleep 60
               echo_t "Uploading backup logs found in $PRESERVE_LOG_PATH"
-              $RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "true" "" $PRESERVE_LOG_PATH "true"
+              $RDK_LOGGER_PATH/uploadRDKBLogs.sh "$SERVER" "HTTP" "$URL" "true" "" "$PRESERVE_LOG_PATH" "true"
             else 
              echo_t "No backup logs found in $PRESERVE_LOG_PATH"
             fi
@@ -576,7 +576,7 @@ bootup_upload()
 		if [ "$UPLOADED_AFTER_REBOOT" == "true" ]
 		then
 			random_sleep		
-			$RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "false" "" $TMP_LOG_UPLOAD_PATH "true"
+			$RDK_LOGGER_PATH/uploadRDKBLogs.sh "$SERVER" "HTTP" "$URL" "false" "" "$TMP_LOG_UPLOAD_PATH" "true"
 		else
 			while [ "$loop" = "1" ]
 			do
@@ -602,10 +602,10 @@ bootup_upload()
 			then
 				random_sleep
 				echo_t "Uploading backup logs found in $PRESERVE_LOG_PATH"
-				$RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "true" "" $PRESERVE_LOG_PATH "true"
+				$RDK_LOGGER_PATH/uploadRDKBLogs.sh "$SERVER" "HTTP" "$URL" "true" "" "$PRESERVE_LOG_PATH" "true"
 			else
 				random_sleep
-				$RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "false" "" $TMP_LOG_UPLOAD_PATH "true"
+				$RDK_LOGGER_PATH/uploadRDKBLogs.sh "$SERVER" "HTTP" "$URL" "false" "" "$TMP_LOG_UPLOAD_PATH" "true"
                         fi
                         UPLOADED_AFTER_REBOOT="true"
 		fi
@@ -909,7 +909,7 @@ do
 			fi
 		        if [ "$UPLOAD_LOGS" = "true" ]
 			then
-				$RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "false"
+				$RDK_LOGGER_PATH/uploadRDKBLogs.sh "$SERVER" "HTTP" "$URL" "false"
                                 http_ret=$?
                                 echo_t "Logupload http_ret value = $http_ret"
                                 if [ "$http_ret" = "200" ] || [ "$http_ret" = "302" ] ;then
@@ -922,7 +922,7 @@ do
                                                  if [ "$fileToUpload" != "" ] ;then
                                                      file_list=$fileToUpload
                                                      echo_t "Direct comm. available preserve logs = $fileToUpload"
-                                                     $RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "true" "" $PRESERVE_LOG_PATH
+                                                     $RDK_LOGGER_PATH/uploadRDKBLogs.sh "$SERVER" "HTTP" "$URL" "true" "" "$PRESERVE_LOG_PATH"
                                                  else
                                                         echo_t "Direct comm. No preserve logs found in $PRESERVE_LOG_PATH"
                                                  fi
@@ -992,7 +992,7 @@ do
 
 		        if [ "$UPLOAD_LOGS" = "true" ]
 			then			
-				$RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "false" "true"
+				$RDK_LOGGER_PATH/uploadRDKBLogs.sh "$SERVER" "HTTP" "$URL" "false" "true"
 			else
 				echo_t "Regular log upload is disabled"         
 			fi

@@ -235,7 +235,7 @@ calcRandTimeandUpload()
 
     if [ "$UPLOAD_LOGS" =  "true" ]
     then
-	    $RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "false"
+	    $RDK_LOGGER_PATH/uploadRDKBLogs.sh "$SERVER" "HTTP" "$URL" "false"
     else
 	    echo_t "Log upload is disabled in maintenance window"         
     fi

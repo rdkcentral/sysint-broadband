@@ -321,7 +321,7 @@ then
                 backupAllLogs "$LOG_PATH" "$LOG_BACK_UP_PATH" "cp"
 	fi
 
-    $RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "false" 
+    $RDK_LOGGER_PATH/uploadRDKBLogs.sh "$SERVER" "HTTP" "$URL" "false"
     backup_log_pidCleanup
     exit 0
 else
