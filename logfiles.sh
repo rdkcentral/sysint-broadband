@@ -288,6 +288,32 @@ log_file_update_offset()
 SUPPRESS_OFFSET_DIR="/nvram2/.suppress_offsets"
 SUPPRESS_ENABLE_FILE="/nvram2/.log_suppression_enabled"
 SUPPRESS_STATS_FILE="/nvram2/.suppress_stats.log"
+LOG_UPLOAD_STATS_FILE="/nvram2/.log_upload_stats.log"
+
+# log_upload_stats <tar_file> <source_function>
+#   Records log upload stats to persistent file in nvram2.
+#   Tracks: timestamp, filename, size, source function
+log_upload_stats()
+{
+    local tar_file="$1"
+    local source_func="${2:-unknown}"
+    local timestamp
+    local file_size
+
+    timestamp=$(date "+%y%m%d-%H:%M:%S")
+
+    if [ -f "$tar_file" ]; then
+        file_size=$(du -k "$tar_file" 2>/dev/null | awk '{print $1}')
+        if [ -z "$file_size" ]; then
+            file_size="0"
+        fi
+    else
+        file_size="0"
+    fi
+
+    echo "$timestamp | file:$(basename "$tar_file") | size:${file_size}KB | source:$source_func" >> "$LOG_UPLOAD_STATS_FILE"
+    echo_t "Log upload tracked: $(basename "$tar_file") (${file_size}KB)"
+}
 
 # suppress_log_file_slice <input_file> <output_file> [append_mode]
 #   Suppresses repeated patterns in input_file and writes to output_file.
@@ -1108,10 +1134,12 @@ backupnvram2logs()
                 echo "tar activation logs from backupnvram2logs"
                 copy_onboardlogs "$LOG_SYNC_PATH"
                 tar -X $PATTERN_FILE -cvzf $MAC"_Logs_"$dt"_activation_log.tgz" $LOG_SYNC_PATH
+                log_upload_stats "$destn/$MAC"_Logs_"$dt"_activation_log.tgz" "backupnvram2logs"
                 rm -rf /tmp/backup_onboardlogs
             else
                 echo "tar logs from backupnvram2logs"
 	            tar -X $PATTERN_FILE -cvzf $MAC"_Logs_$dt.tgz" $LOG_SYNC_PATH
+	            log_upload_stats "$destn/$MAC"_Logs_$dt.tgz" "backupnvram2logs"
 	        fi
         fi
 
@@ -1216,10 +1244,12 @@ backupnvram2logs_on_reboot()
 	    echo "tar activation logs from backupnvram2logs_on_reboot"
 	    copy_onboardlogs "$TarFolder"
 	    tar -X $PATTERN_FILE -cvzf $MAC"_Logs_"$dt"_activation_log.tgz" $TarFolder
+	    log_upload_stats "$destn/$MAC"_Logs_"$dt"_activation_log.tgz" "backupnvram2logs_on_reboot"
 	    rm -rf /tmp/backup_onboardlogs
     else
         echo "tar logs from backupnvram2logs_on_reboot"
 	    tar -X $PATTERN_FILE -cvzf $MAC"_Logs_$dt.tgz" $TarFolder
+	    log_upload_stats "$destn/$MAC"_Logs_$dt.tgz" "backupnvram2logs_on_reboot"
     fi
 	rm $PATTERN_FILE
 	
@@ -1357,10 +1387,12 @@ backupAllLogs()
 	    echo "tar activation logs from backupAllLogs"
 	    copy_onboardlogs "$dt"
 	    tar -X $PATTERN_FILE -cvzf $MAC"_Logs_"$dt"activation_log.tgz" $dt
+	    log_upload_stats "$destn/$MAC"_Logs_"$dt"activation_log.tgz" "backupAllLogs"
 	    rm -rf /tmp/backup_onboardlogs
 	else
 	    echo "tar logs from backupAllLogs"
 	    tar -X $PATTERN_FILE -cvzf $MAC"_Logs_$dt.tgz" $dt
+	    log_upload_stats "$destn/$MAC"_Logs_$dt.tgz" "backupAllLogs"
     fi
 	rm $PATTERN_FILE
  	rm -rf $dt
