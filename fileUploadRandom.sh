@@ -222,6 +222,8 @@ calcRandTimeandUpload()
     else
         echo_t "Log upload is disabled. Removing indicator in maintenance window"         
         rm -rf /tmp/.uploadregularlogs
+		# Track that upload was skipped due to DCM setting
+        log_upload_stats "" "fileUploadRandom_maint" "skipped" "dcm_upload_disabled"
     fi
 
     if [ "$nvram2Backup" == "true" ]; then
