@@ -58,6 +58,15 @@ TELEMETRY_INOTIFY_FOLDER=/telemetry
 TELEMETRY_INOTIFY_EVENT="$TELEMETRY_INOTIFY_FOLDER/eventType.cmd"
 
 DCA_COMPLETED="/tmp/.dca_done"
+
+# DCM Response file paths - required for processDCMResponse()
+# PERSISTENT_PATH is typically /tmp, defined in device.properties or log_capture_path.sh
+if [ -z "$PERSISTENT_PATH" ]; then
+    PERSISTENT_PATH="/tmp"
+fi
+DCMRESPONSE="$PERSISTENT_PATH/DCMresponse.txt"
+DCMRESPONSE_TMP="$PERSISTENT_PATH/DCMresponse_tmp.txt"
+DCM_SETTINGS_PARSED="/tmp/.dcm_settings_parsed"
 PING_PATH="/usr/sbin"
 ARM_LOGS_NVRAM2="/nvram2/logs/ArmConsolelog.txt.0"
 
@@ -290,13 +299,91 @@ SUPPRESS_ENABLE_FILE="/nvram2/.log_suppression_enabled"
 SUPPRESS_STATS_FILE="/nvram2/.suppress_stats.log"
 LOG_UPLOAD_STATS_FILE="/nvram2/.log_upload_stats.log"
 
-# log_upload_stats <tar_file> <source_function>
+# get_cpu_usage
+#   Returns current CPU usage percentage (user + system).
+#   Uses /proc/stat for accurate measurement.
+#   Returns: CPU usage as integer percentage (0-100)
+get_cpu_usage()
+{
+    local cpu_line idle_time total_time cpu_usage
+    
+    # Read CPU stats from /proc/stat
+    # Format: cpu user nice system idle iowait irq softirq steal guest guest_nice
+    cpu_line=$(head -n 1 /proc/stat 2>/dev/null)
+    if [ -z "$cpu_line" ]; then
+        echo "0"
+        return
+    fi
+    
+    # Parse the values
+    set -- $cpu_line
+    shift  # Remove 'cpu' label
+    
+    local user="$1" nice="$2" system="$3" idle="$4" iowait="$5"
+    local irq="$6" softirq="$7" steal="${8:-0}"
+    
+    # Calculate total and idle time
+    idle_time=$((idle + iowait))
+    total_time=$((user + nice + system + idle + iowait + irq + softirq + steal))
+    
+    # Calculate usage percentage
+    if [ "$total_time" -gt 0 ]; then
+        cpu_usage=$(( (total_time - idle_time) * 100 / total_time ))
+    else
+        cpu_usage=0
+    fi
+    
+    echo "$cpu_usage"
+}
+
+# get_cpu_usage_delta
+#   Measures CPU usage over a brief sample period (more accurate).
+#   Returns: CPU usage as integer percentage (0-100)
+get_cpu_usage_delta()
+{
+    local sample_ms="${1:-100}"  # Default 100ms sample
+    local cpu1 cpu2 idle1 idle2 total1 total2
+    local user nice system idle iowait irq softirq steal
+    
+    # First sample
+    read cpu1 user nice system idle iowait irq softirq steal < /proc/stat 2>/dev/null
+    idle1=$((idle + iowait))
+    total1=$((user + nice + system + idle + iowait + irq + softirq + ${steal:-0}))
+    
+    # Wait for sample period (using usleep if available, else minimal sleep)
+    if command -v usleep >/dev/null 2>&1; then
+        usleep $((sample_ms * 1000))
+    else
+        sleep 0.1
+    fi
+    
+    # Second sample
+    read cpu2 user nice system idle iowait irq softirq steal < /proc/stat 2>/dev/null
+    idle2=$((idle + iowait))
+    total2=$((user + nice + system + idle + iowait + irq + softirq + ${steal:-0}))
+    
+    # Calculate delta
+    local idle_delta=$((idle2 - idle1))
+    local total_delta=$((total2 - total1))
+    
+    if [ "$total_delta" -gt 0 ]; then
+        echo $(( (total_delta - idle_delta) * 100 / total_delta ))
+    else
+        echo "0"
+    fi
+}
+
+# log_upload_stats <tar_file> <source_function> [status] [reason]
 #   Records log upload stats to persistent file in nvram2.
-#   Tracks: timestamp, filename, size, source function
+#   Tracks: timestamp, filename, size, source function, status, reason
+#   status: "uploaded" (default), "skipped"
+#   reason: reason for skip (e.g., "dcm_disabled", "wan_down", etc.)
 log_upload_stats()
 {
     local tar_file="$1"
     local source_func="${2:-unknown}"
+    local status="${3:-uploaded}"
+    local reason="${4:-}"
     local timestamp
     local file_size
 
@@ -311,8 +398,13 @@ log_upload_stats()
         file_size="0"
     fi
 
-    echo "$timestamp | file:$(basename "$tar_file") | size:${file_size}KB | source:$source_func" >> "$LOG_UPLOAD_STATS_FILE"
-    echo_t "Log upload tracked: $(basename "$tar_file") (${file_size}KB)"
+    if [ "$status" = "skipped" ]; then
+        echo "$timestamp | status:SKIPPED | reason:$reason | source:$source_func" >> "$LOG_UPLOAD_STATS_FILE"
+        echo_t "Log upload SKIPPED: $source_func (reason: $reason)"
+    else
+        echo "$timestamp | file:$(basename "$tar_file") | size:${file_size}KB | source:$source_func" >> "$LOG_UPLOAD_STATS_FILE"
+        echo_t "Log upload tracked: $(basename "$tar_file") (${file_size}KB)"
+    fi
 }
 
 # suppress_log_file_slice <input_file> <output_file> [append_mode]
@@ -552,11 +644,23 @@ suppress_logs_inline()
     local total=0
     local size_before=0
     local size_after=0
+    local cpu_before=0
+    local cpu_peak=0
+    local cpu_after=0
+    local cpu_current=0
+    local start_time=0
+    local end_time=0
+    local duration_ms=0
 
     # Ensure offset tracking directory exists
     if [ ! -d "$SUPPRESS_OFFSET_DIR" ]; then
         mkdir -p "$SUPPRESS_OFFSET_DIR"
     fi
+
+    # Record CPU usage BEFORE suppression starts
+    cpu_before=$(get_cpu_usage)
+    cpu_peak=$cpu_before
+    start_time=$(date +%s%3N 2>/dev/null || date +%s)  # milliseconds if supported
 
     # Calculate total size before suppression
     size_before=$(du -sk "$dir" 2>/dev/null | awk '{print $1}')
@@ -573,6 +677,7 @@ suppress_logs_inline()
 
     echo_t "Starting incremental log suppression: $total file(s) in $dir"
     echo_t "Size before suppression: ${size_before} KB"
+    echo_t "CPU usage before suppression: ${cpu_before}%"
 
     for file in "$dir"/*; do
         # Skip if not a regular file
@@ -677,7 +782,26 @@ suppress_logs_inline()
         # Log per-file stats
         echo_t "  [suppress] $basename: $last_processed lines kept, $new_lines new -> $final_lines total"
         processed=$((processed + 1))
+        
+        # Sample CPU during processing to track peak
+        cpu_current=$(get_cpu_usage)
+        if [ "$cpu_current" -gt "$cpu_peak" ]; then
+            cpu_peak=$cpu_current
+        fi
     done
+
+    # Record CPU usage AFTER suppression completes
+    cpu_after=$(get_cpu_usage)
+    end_time=$(date +%s%3N 2>/dev/null || date +%s)
+    
+    # Calculate duration
+    if [ "$end_time" -gt 1000000000000 ]; then
+        # Millisecond timestamps
+        duration_ms=$((end_time - start_time))
+    else
+        # Second timestamps, convert to ms
+        duration_ms=$(( (end_time - start_time) * 1000 ))
+    fi
 
     # Calculate total size after suppression
     size_after=$(du -sk "$dir" 2>/dev/null | awk '{print $1}')
@@ -693,14 +817,22 @@ suppress_logs_inline()
         percent_reduced=0
     fi
 
+    # Calculate CPU increase
+    local cpu_increase=$((cpu_peak - cpu_before))
+    if [ "$cpu_increase" -lt 0 ]; then
+        cpu_increase=0
+    fi
+
     echo_t "Incremental suppression done: $processed/$total files processed"
     echo_t "Size after suppression: ${size_after} KB"
     echo_t "Size reduced: ${size_diff} KB (${percent_reduced}% reduction)"
+    echo_t "CPU: before=${cpu_before}% peak=${cpu_peak}% after=${cpu_after}% increase=${cpu_increase}%"
+    echo_t "Duration: ${duration_ms}ms"
 
     # Append stats to persistent file (survives reboots)
     local timestamp
     timestamp=$(date "+%y%m%d-%H:%M:%S")
-    echo "$timestamp | files:$processed/$total | before:${size_before}KB | after:${size_after}KB | reduced:${size_diff}KB (${percent_reduced}%)" >> "$SUPPRESS_STATS_FILE"
+    echo "$timestamp | files:$processed/$total | before:${size_before}KB | after:${size_after}KB | reduced:${size_diff}KB (${percent_reduced}%) | cpu:${cpu_before}%->${cpu_peak}%->${cpu_after}% (+${cpu_increase}%) | duration:${duration_ms}ms" >> "$SUPPRESS_STATS_FILE"
 }
 
 # clear_suppress_offsets
@@ -1141,6 +1273,18 @@ backupnvram2logs()
 	            tar -X $PATTERN_FILE -cvzf $MAC"_Logs_$dt.tgz" $LOG_SYNC_PATH
 	            log_upload_stats "${destn}/${MAC}_Logs_${dt}.tgz" "backupnvram2logs"
 	        fi
+        else
+            # Track skipped upload with reason
+            local skip_reason="unknown"
+            if [ ! -f "/tmp/.uploadregularlogs" ]; then
+                skip_reason="dcm_disabled"
+            fi
+            local upload_flag_status="missing"
+            if [ -f "/tmp/.uploadregularlogs" ]; then
+                upload_flag_status="exists"
+            fi
+            echo_t "Log upload skipped in backupnvram2logs: uploadregularlogs=$upload_flag_status, wan_event=$wan_event"
+            log_upload_stats "" "backupnvram2logs" "skipped" "$skip_reason"
         fi
 
 	rm $PATTERN_FILE
@@ -1521,6 +1665,7 @@ processDCMResponse()
                                 fi
 				sysevent set UPLOAD_LOGS_VAL_DCM $UPLOAD_LOGS
 				touch $DCM_SETTINGS_PARSED
+				echo_t "processDCMResponse: LogUploadSettings found, UPLOAD_LOGS=$UPLOAD_LOGS"
 				echo "$UPLOAD_LOGS"
 				break		
 		    fi
@@ -1531,6 +1676,7 @@ processDCMResponse()
                     UPLOAD_LOGS="true"
                     sysevent set UPLOAD_LOGS_VAL_DCM $UPLOAD_LOGS
                     touch $DCM_SETTINGS_PARSED
+                    echo_t "processDCMResponse: No LogUploadSettings in DCM, defaulting UPLOAD_LOGS=true"
                     echo "$UPLOAD_LOGS"
 		fi
 
@@ -1538,6 +1684,8 @@ processDCMResponse()
 	UPLOAD_LOGS="false"
 	sysevent set UPLOAD_LOGS_VAL_DCM $UPLOAD_LOGS
 	touch $DCM_SETTINGS_PARSED
+	echo_t "processDCMResponse: DCMresponse file NOT FOUND at $DCMRESPONSE, UPLOAD_LOGS=false"
+	log_upload_stats "" "processDCMResponse" "skipped" "dcm_file_missing"
 	echo "$UPLOAD_LOGS"
     fi
 }
