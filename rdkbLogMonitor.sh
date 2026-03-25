@@ -870,7 +870,9 @@ do
 				touch /tmp/.uploadregularlogs
 			else
 				echo_t "Log upload is disabled. Removing indicator in regular upload"         
-				rm -rf /tmp/.uploadregularlogs                                
+				rm -rf /tmp/.uploadregularlogs  
+				# Track that upload was skipped due to DCM setting
+				log_upload_stats "" "rdkbLogMonitor_maxsize" "skipped" "dcm_upload_disabled"
 			fi
 			
 			cd $TMP_UPLOAD
@@ -982,6 +984,8 @@ do
 			else
 				echo_t "Log upload is disabled. Removing indicator in maintenance window"         
 				rm /tmp/.uploadregularlogs
+				# Track that upload was skipped due to DCM setting
+				log_upload_stats "" "rdkbLogMonitor_nvram2_disabled" "skipped" "dcm_upload_disabled"
 			fi
 
 			syncLogs_nvram2
@@ -994,7 +998,8 @@ do
 			then			
 				$RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "false" "true"
 			else
-				echo_t "Regular log upload is disabled"         
+				echo_t "Regular log upload is disabled"
+				log_upload_stats "" "rdkbLogMonitor_nvram2" "skipped" "dcm_upload_disabled"
 			fi
 
 		fi
