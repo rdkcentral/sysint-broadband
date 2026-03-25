@@ -239,7 +239,8 @@ calcRandTimeandUpload()
     then
 	    $RDK_LOGGER_PATH/uploadRDKBLogs.sh $SERVER "HTTP" $URL "false"
     else
-	    echo_t "Log upload is disabled in maintenance window"         
+	    echo_t "Log upload is disabled in maintenance window"      
+		log_upload_stats "" "fileUploadRandom" "skipped" "dcm_upload_disabled"
     fi
 
     upload_logfile=0
