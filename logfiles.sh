@@ -80,6 +80,60 @@ else
 SYSCFG_DB_FILE="/opt/secure/data/syscfg.db"
 fi
 
+# CPU and Timing tracking functions for sync operations
+get_cpu_usage()
+{
+    # Get CPU usage from /proc/stat
+    cpu_line=$(head -1 /proc/stat)
+    cpu_user=$(echo $cpu_line | awk '{print $2}')
+    cpu_nice=$(echo $cpu_line | awk '{print $3}')
+    cpu_system=$(echo $cpu_line | awk '{print $4}')
+    cpu_idle=$(echo $cpu_line | awk '{print $5}')
+    cpu_iowait=$(echo $cpu_line | awk '{print $6}')
+    
+    cpu_active=$((cpu_user + cpu_nice + cpu_system + cpu_iowait))
+    cpu_total=$((cpu_active + cpu_idle))
+    
+    echo "$cpu_active $cpu_total"
+}
+
+calculate_cpu_percent()
+{
+    start_active=$1
+    start_total=$2
+    end_active=$3
+    end_total=$4
+    
+    active_diff=$((end_active - start_active))
+    total_diff=$((end_total - start_total))
+    
+    if [ "$total_diff" -gt 0 ]; then
+        cpu_percent=$((active_diff * 100 / total_diff))
+    else
+        cpu_percent=0
+    fi
+    
+    echo $cpu_percent
+}
+
+log_sync_metrics()
+{
+    operation=$1
+    start_time=$2
+    end_time=$3
+    start_cpu_active=$4
+    start_cpu_total=$5
+    end_cpu_active=$6
+    end_cpu_total=$7
+    
+    duration=$((end_time - start_time))
+    cpu_percent=$(calculate_cpu_percent $start_cpu_active $start_cpu_total $end_cpu_active $end_cpu_total)
+    
+    echo_t "SYNC_METRICS: $operation - Duration: ${duration}s, CPU Usage: ${cpu_percent}%"
+    echo_t "SYNC_METRICS: $operation - Start: $start_time, End: $end_time" >> /rdklogs/logs/sync_metrics.log
+    echo_t "SYNC_METRICS: $operation - Duration: ${duration}s, CPU: ${cpu_percent}%" >> /rdklogs/logs/sync_metrics.log
+}
+
 moveFile()
 {        
      if [[ -f "$1" ]]; then mv $1 $2; fi
@@ -362,6 +416,13 @@ syncLogs_nvram2()
 {
     option=$1
 
+    # Start CPU and timing tracking
+    sync_start_time=$(date +%s)
+    sync_start_cpu=$(get_cpu_usage)
+    sync_start_cpu_active=$(echo $sync_start_cpu | awk '{print $1}')
+    sync_start_cpu_total=$(echo $sync_start_cpu | awk '{print $2}')
+    echo_t "SYNC_START: syncLogs_nvram2 started at $(date)"
+
     echo_t "sync logs to nvram2"
     if [ ! -d "$LOG_SYNC_PATH" ]; then
         #echo "making sync dir"
@@ -411,6 +472,14 @@ syncLogs_nvram2()
     if [ -f /tmp/backup_onboardlogs ]; then
         backup_onboarding_logs
     fi
+
+    # End CPU and timing tracking
+    sync_end_time=$(date +%s)
+    sync_end_cpu=$(get_cpu_usage)
+    sync_end_cpu_active=$(echo $sync_end_cpu | awk '{print $1}')
+    sync_end_cpu_total=$(echo $sync_end_cpu | awk '{print $2}')
+    log_sync_metrics "syncLogs_nvram2" $sync_start_time $sync_end_time $sync_start_cpu_active $sync_start_cpu_total $sync_end_cpu_active $sync_end_cpu_total
+    echo_t "SYNC_END: syncLogs_nvram2 completed at $(date)"
 }
 
 CopyToTmp()
@@ -595,6 +664,13 @@ backupnvram2logs()
 	dt=`date "+%m-%d-%y-%I-%M%p"`
 	workDir=`pwd`
 
+	# Start CPU and timing tracking for backup
+	backup_start_time=$(date +%s)
+	backup_start_cpu=$(get_cpu_usage)
+	backup_start_cpu_active=$(echo $backup_start_cpu | awk '{print $1}')
+	backup_start_cpu_total=$(echo $backup_start_cpu | awk '{print $2}')
+	echo_t "BACKUP_START: backupnvram2logs started at $(date)"
+
 	#createSysDescr
         echo_t "[DEBUG] ++IN function backupnvram2logs"	 >> /rdklogs/logs/telemetry2_0.txt.0
         echo_t "[DEBUG] ++IN function backupnvram2logs"
@@ -710,6 +786,15 @@ backupnvram2logs()
 
         echo_t "[DEBUG] --OUT function backupnvram2logs" >> /rdklogs/logs/telemetry2_0.txt.0
         echo_t "[DEBUG] --OUT function backupnvram2logs"
+
+	# End CPU and timing tracking for backup
+	backup_end_time=$(date +%s)
+	backup_end_cpu=$(get_cpu_usage)
+	backup_end_cpu_active=$(echo $backup_end_cpu | awk '{print $1}')
+	backup_end_cpu_total=$(echo $backup_end_cpu | awk '{print $2}')
+	log_sync_metrics "backupnvram2logs" $backup_start_time $backup_end_time $backup_start_cpu_active $backup_start_cpu_total $backup_end_cpu_active $backup_end_cpu_total
+	echo_t "BACKUP_END: backupnvram2logs completed at $(date)"
+
 	cd $workDir
 }
 
