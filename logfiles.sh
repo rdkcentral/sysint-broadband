@@ -1641,6 +1641,8 @@ processDCMResponse()
 
     if [ -f "$DCMRESPONSE" ] 
     then
+	    # DCM file exists - clear the "missing" flag so we can log if it goes missing again
+	    rm -f /tmp/.dcm_missing_logged 2>/dev/null
 	
 		 cp $DCMRESPONSE $DCMRESPONSE_TMP
 
@@ -1684,8 +1686,12 @@ processDCMResponse()
 	UPLOAD_LOGS="false"
 	sysevent set UPLOAD_LOGS_VAL_DCM $UPLOAD_LOGS
 	touch $DCM_SETTINGS_PARSED
-	echo_t "processDCMResponse: DCMresponse file NOT FOUND at $DCMRESPONSE, UPLOAD_LOGS=false"
-	log_upload_stats "" "processDCMResponse" "skipped" "dcm_file_missing"
+	# Only log DCM file missing once (not every minute)
+	if [ ! -f "/tmp/.dcm_missing_logged" ]; then
+	    echo_t "processDCMResponse: DCMresponse file NOT FOUND at $DCMRESPONSE, UPLOAD_LOGS=false"
+	    log_upload_stats "" "processDCMResponse" "skipped" "dcm_file_missing"
+	    touch /tmp/.dcm_missing_logged
+	fi
 	echo "$UPLOAD_LOGS"
     fi
 }
