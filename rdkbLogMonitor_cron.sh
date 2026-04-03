@@ -79,7 +79,6 @@ DeviceUP=0
 CRON_MODE=0
 RDKB_LOGMON_TMP_DIR="/tmp/.rdkb_logmonitor"
 BOOTUP_UPLOAD_STATE="/tmp/bootup_upload.state"
-RDKLOGGER_EXECUTION_MODE="/tmp/.rdklogger_execution_mode"
 
 BOOT_PROCESSING_DONE="$RDKB_LOGMON_TMP_DIR/.boot_processing_done"
 CRON_INITIALIZED_FLAG="$RDKB_LOGMON_TMP_DIR/.cron_initialized"
@@ -836,40 +835,19 @@ fi
 UPLOAD_LOGS=`processDCMResponse`
 rdklogger_cron_enable=`syscfg get RdkbLogCronEnable`
 
-if [ ! -f "$RDKLOGGER_EXECUTION_MODE" ]; then
-    if [ "$rdklogger_cron_enable" = "true" ]; then
-        echo "cron" > "$RDKLOGGER_EXECUTION_MODE"
-    else
-        echo "process" > "$RDKLOGGER_EXECUTION_MODE"
-    fi
-fi
-
-execution_mode=$(cat "$RDKLOGGER_EXECUTION_MODE")
-
-if [ "$execution_mode" = "cron" ]; then
-    LOCKDIR="/tmp/rdkbLogMonitor_cron.lock"
-
-    if mkdir "$LOCKDIR" 2>/dev/null; then
-        echo "$$" > "$LOCKDIR/pid"
-        trap 'rm -rf "$LOCKDIR"' EXIT INT TERM
-    else
-        pid=$(cat "$LOCKDIR/pid" 2>/dev/null)
-        if [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
-            cmd=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)
-            case "$cmd" in
-                *rdkbLogMonitor_cron.sh*)
-                    echo_t "Already a cron instance is running for ‎rdkbLogMonitor file; No 2nd instance"
-                    exit 0
-                    ;;
-            esac
+if [ "$rdklogger_cron_enable" = "true" ]; then
+    LOCKFILE="/tmp/rdkb_cron.lock"
+    if [ -f "$LOCKFILE" ]; then
+        old_pid=$(cat "$LOCKFILE" 2>/dev/null)
+        if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+            echo_t "Already a cron instance is running; No 2nd instance"
+            exit 0
         fi
-
-        # stale lock
-        rm -rf "$LOCKDIR" 2>/dev/null || exit 1
-        mkdir "$LOCKDIR" || exit 1
-        echo "$$" > "$LOCKDIR/pid"
-        trap 'rm -rf "$LOCKDIR"' EXIT INT TERM
+        rm -f "$LOCKFILE"
     fi
+    echo $$ > "$LOCKFILE"
+    cleanup() { rm -f "$LOCKFILE"; }
+    trap cleanup EXIT
 else
     RDKLOG_LOCK_DIR="/tmp/locking_logmonitor"
 
@@ -1255,7 +1233,7 @@ service_mode() {
     ########################################################
 }
 
-if [ "$execution_mode" = "cron" ]; then
+if [ "$rdklogger_cron_enable" = "true" ]; then
     CRON_MODE=1
     
     if [ ! -d "$RDKB_LOGMON_TMP_DIR" ]; then

@@ -31,8 +31,6 @@ JOURNAL_RUNTIME_DIR="/run/systemd/journald.conf.d"
 JOURNAL_OVERRIDE_FILE="${JOURNAL_RUNTIME_DIR}/override.conf"
 LOG_FILE="/rdklogs/logs/Consolelog.txt.0"
 
-RDKLOGGER_EXECUTION_MODE="/tmp/.rdklogger_execution_mode"
-
 echo_t()
 {
         echo "$(date +"%y%m%d-%T.%6N") $*" >> "$LOG_FILE"
@@ -88,20 +86,17 @@ EOF
 install_cron_entry() {
     if [ "$BOX_TYPE" = "XB6" -a "$MANUFACTURE" = "Arris" ]; then
         dmesgsyncinterval_sec=60
+        cron="* * * * *"
     else
         dmesgsyncinterval_sec="$(syscfg get dmesglogsync_interval)"
-    fi
-
-    [ -z "$dmesgsyncinterval_sec" ] && dmesgsyncinterval_sec=900
-
-    interval_min=$((dmesgsyncinterval_sec / 60))
-
-    if [ "$interval_min" -le 1 ]; then
-        cron="* * * * *"
-    elif [ "$interval_min" -ge 60 ]; then
-        cron="0 * * * *"
-    else
-        cron="*/$interval_min * * * *"
+        case "$dmesgsyncinterval_sec" in
+            "60")   cron="* * * * *" ;;
+            "300")  cron="*/5 * * * *" ;;
+            "600")  cron="*/10 * * * *" ;;
+            "900")  cron="*/15 * * * *" ;;
+            "3600") cron="0 * * * *" ;;
+            *)    cron="*/15 * * * *" ;;
+        esac
     fi
 
 	CRON_LINE="$cron /rdklogger/update_journal_log.sh start"
@@ -140,17 +135,7 @@ service_mode() {
 
 rdklogger_cron_enable=`syscfg get RdkbLogCronEnable`
 
-if [ ! -f "$RDKLOGGER_EXECUTION_MODE" ]; then
-    if [ "$rdklogger_cron_enable" = "true" ]; then
-        echo "cron" > "$RDKLOGGER_EXECUTION_MODE"
-    else
-        echo "process" > "$RDKLOGGER_EXECUTION_MODE"
-    fi
-fi
-
-execution_mode=$(cat "$RDKLOGGER_EXECUTION_MODE")
-
-if [ "$execution_mode" = "cron" ]; then
+if [ "$rdklogger_cron_enable" = "true" ]; then
 	
     if [ ! -f "$JOURNAL_CRON_INSTALLED" ]; then
         install_cron_entry
