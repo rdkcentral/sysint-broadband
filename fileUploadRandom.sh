@@ -45,6 +45,23 @@ if [ ! -d "$FILEUPLOAD_TMP_DIR" ]; then
     mkdir -p "$FILEUPLOAD_TMP_DIR"
 fi
 
+rdklogger_cron_enable=`syscfg get RdkbLogCronEnable`
+if [ "$rdklogger_cron_enable" = "true" ]; then
+	CRON_MODE=1
+	LOCKFILE="/tmp/randomfile_cron.lock"
+    if [ -f "$LOCKFILE" ]; then
+        old_pid=$(cat "$LOCKFILE" 2>/dev/null)
+        if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+            echo_t "Already a cron instance is running for fileUploadRandom file; No 2nd instance"
+            exit 0
+        fi
+        rm -f "$LOCKFILE"
+    fi
+    echo $$ > "$LOCKFILE"
+    cleanup() { rm -f "$LOCKFILE"; }
+    trap cleanup EXIT
+fi
+
 generate_random_delay()
 {
     rand_hr=0
@@ -90,7 +107,6 @@ calcRandTimeandUpload()
 
             if [ "$remaining" -le 300 ]; then
 				echo_t "fileupload_random: Sleeping $remaining seconds now" >> "$NEXT_UPLOAD_TIME_FILE"
-				rm -f "$DELAY_REMAINING_FILE" "$HEARTBEAT_TICK_FILE"
 				delay_completed=1
 				[ "$remaining" -gt 0 ] && sleep "$remaining"
             else
@@ -246,6 +262,9 @@ calcRandTimeandUpload()
     fi
 
     createSysDescr
+    if [ "$CRON_MODE" = "1" ]; then
+        rm -f "$DELAY_REMAINING_FILE" "$HEARTBEAT_TICK_FILE"
+    fi
 }
 
 
