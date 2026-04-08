@@ -36,8 +36,10 @@ echo_t()
         echo "$(date +"%y%m%d-%T.%6N") $*" >> "$LOG_FILE"
 }
 
-while [ 1 ]
-do
+JOURNAL_CRON_INSTALLED="/tmp/.journal_log_cron_flag"
+
+do_journal_iteration()
+{
    uptime_in_secs=$(cut -d. -f1 /proc/uptime)
    if [ "$uptime_in_secs" -ge 1800 ] && [ ! -f "$JOURNAL_OVERRIDE_FILE" ]; then
        echo_t "Applying journald runtime override"
@@ -79,13 +81,75 @@ EOF
                 BootupLog_is_updated=1;
            fi
    fi
-   # ARRISXB6-8252   sleep for 60 sec until we populate journalctl
-   if [ "$BOX_TYPE" = "XB6" -a "$MANUFACTURE" = "Arris" ];then
-     dmesgsyncinterval=60
-   else
-     dmesgsyncinterval=`syscfg get dmesglogsync_interval`
-   fi
+}
 
-   sleep $dmesgsyncinterval 
- 
-done
+install_cron_entry() {
+    if [ "$BOX_TYPE" = "XB6" -a "$MANUFACTURE" = "Arris" ]; then
+        dmesgsyncinterval_sec=60
+        cron="* * * * *"
+    else
+        dmesgsyncinterval_sec="$(syscfg get dmesglogsync_interval)"
+        case "$dmesgsyncinterval_sec" in
+            "60")   cron="* * * * *" ;;
+            "300")  cron="*/5 * * * *" ;;
+            "600")  cron="*/10 * * * *" ;;
+            "900")  cron="*/15 * * * *" ;;
+            "3600") cron="0 * * * *" ;;
+            *)    cron="*/15 * * * *" ;;
+        esac
+    fi
+
+	CRON_LINE="$cron /rdklogger/update_journal_log.sh start"
+    
+    if crontab -l 2>/dev/null | grep -q "update_journal_log.sh"; then
+        echo_t "update_journal_log.sh - Cron entry already present"
+        return 0
+    fi
+
+    (crontab -l 2>/dev/null; echo "$CRON_LINE") | crontab -
+    rc=$?
+    
+    if [ $rc -eq 0 ]; then
+        echo_t "update_journal_log.sh - Cron installed cleanly: $CRON_LINE"
+    else
+        echo_t "update_journal_log.sh - Cron install failed (rc=$rc)"
+    fi
+}
+
+service_mode() {
+
+    while [ 1 ];
+    do
+        do_journal_iteration
+        # ARRISXB6-8252   sleep for 60 sec until we populate journalctl
+        if [ "$BOX_TYPE" = "XB6" -a "$MANUFACTURE" = "Arris" ];then
+           dmesgsyncinterval=60
+        else
+           dmesgsyncinterval=`syscfg get dmesglogsync_interval`
+        fi
+
+       sleep $dmesgsyncinterval
+
+    done
+}
+
+rdklogger_cron_enable=`syscfg get RdkbLogCronEnable`
+
+if [ "$rdklogger_cron_enable" = "true" ]; then
+	
+    if [ ! -f "$JOURNAL_CRON_INSTALLED" ]; then
+        install_cron_entry
+        touch "$JOURNAL_CRON_INSTALLED"
+	    do_journal_iteration
+		
+		if [ -f /lib/systemd/system/log_journalmsg.service ]; then
+            systemctl stop log_journalmsg.service
+        fi
+        exit 0
+    else
+        do_journal_iteration
+        exit 0
+    fi
+else
+    service_mode
+fi
