@@ -19,63 +19,50 @@
 . /etc/include.properties
 . /etc/device.properties
 
-ZRAM_LOGFILE=${LOG_PATH}/zram.log
+MEMSWAP_LOGFILE="${LOG_PATH}/memswap.log"
 
-zram_log()
-{
-	echo $1 >> $ZRAM_LOGFILE
+echo_t() {
+    echo "$(date +"%y%m%d-%T.%6N") $1" >>$MEMSWAP_LOGFILE
 }
 
-# wait for the dm system to come up
+# Wait for the DM system to come up
 dmIsUp=1
-while [ "x$dmIsUp" != "x0" ] 
-do
-	dmcli eRT getv Device.DeviceInfo.X_RDKCENTRAL-COM_RFC.Feature.MEMSWAP.Enable  | grep value
-	dmIsUp=$?
-	sleep 10
+while [ "x$dmIsUp" != "x0" ]; do
+    dmcli eRT getv Device.DeviceInfo.X_RDKCENTRAL-COM_RFC.Feature.MEMSWAP.Enable | grep value
+    dmIsUp=$?
+    sleep 10
 done
 
-#check if zram is enabled by RFC, exit if not enabled
-ZRAM_RFC_ENABLE=`dmcli eRT retv Device.DeviceInfo.X_RDKCENTRAL-COM_RFC.Feature.MEMSWAP.Enable`
-if [ "x$ZRAM_RFC_ENABLE" != "xtrue" ]; then
-    zram_log "zram is disabled"
+# Check if MEMSWAP is enabled by RFC, exit if not enabled
+MEMSWAP_RFC_ENABLE=$(dmcli eRT retv Device.DeviceInfo.X_RDKCENTRAL-COM_RFC.Feature.MEMSWAP.Enable)
+if [ "x$MEMSWAP_RFC_ENABLE" != "xtrue" ]; then
+    echo_t "MEMSWAP is disabled"
     exit 1
 fi
 
-# load module
-NRDEVICES=$(grep -c ^processor /proc/cpuinfo | sed 's/^0$/1/')
-if modinfo zram | grep -q ' zram_num_devices:' 2>/dev/null; then
-    MODPROBE_ARGS="zram_num_devices=${NRDEVICES}"
-elif modinfo zram | grep -q ' num_devices:' 2>/dev/null; then
-    MODPROBE_ARGS="num_devices=${NRDEVICES}"
-else
-    exit 1
-fi
-modprobe zram $MODPROBE_ARGS
+# Load ZRAM module with one block device for SWAP
+modprobe zram num_devices=1
 
-# decide max percentage
-max_percentage=50
-if [ ! -z ${ZRAM_MEM_MAX_PERCENTAGE+x} ]; then
-    zram_log "using max mem percentage from device.properties: $ZRAM_MEM_MAX_PERCENTAGE"
-    max_percentage=${ZRAM_MEM_MAX_PERCENTAGE}
-fi
+# Configure the disk size
+MEMSWAP_DISK_SIZE=$(dmcli eRT retv Device.DeviceInfo.X_RDKCENTRAL-COM_RFC.Feature.MEMSWAP.DiskSize)
+echo "${MEMSWAP_DISK_SIZE}M" >/sys/block/zram0/disksize
+echo_t "MEMSWAP disk size set to ${MEMSWAP_DISK_SIZE}M"
 
-# Calculate memory to use for zram (1/2 of ram)
-totalmem=`LC_ALL=C free | grep -e "^Mem:" | sed -e 's/^Mem: *//' -e 's/  *.*//'`
-mem=$(((totalmem * 1024) / (100/50) / ${NRDEVICES}))
+# Configure the system swappiness
+MEMSWAP_TUNABLES_SWAPPINESS=$(dmcli eRT retv Device.DeviceInfo.X_RDKCENTRAL-COM_RFC.Feature.MEMSWAP.Tunables.Swappiness)
+sysctl -w vm.swappiness="$MEMSWAP_TUNABLES_SWAPPINESS"
+echo_t "System swappiness set to ${MEMSWAP_TUNABLES_SWAPPINESS}"
 
-zram_log "enabling zram with $NRDEVICES devices of $mem size each"
-zram_log "zram_enabled_stats: $NRDEVICES,$mem"
-# give enough time for module loading to finish even under high load conditions.
-sleep 3
+# Configure the system watermark scale factor
+MEMSWAP_TUNABLES_WATERMARK_SCALE_FACTOR=$(dmcli eRT retv Device.DeviceInfo.X_RDKCENTRAL-COM_RFC.Feature.MEMSWAP.Tunables.WatermarkScaleFactor)
+sysctl -w vm.watermark_scale_factor="$MEMSWAP_TUNABLES_WATERMARK_SCALE_FACTOR"
+echo_t "System watermark scale factor set to ${MEMSWAP_TUNABLES_WATERMARK_SCALE_FACTOR}"
 
-#minimum swappiness of 60 is needed for good usage of zram
-echo 60 >  /proc/sys/vm/swappiness
+# Configure the system page cluster for SWAP
+MEMSWAP_TUNABLES_PAGE_CLUSTER=$(dmcli eRT retv Device.DeviceInfo.X_RDKCENTRAL-COM_RFC.Feature.MEMSWAP.Tunables.PageCluster)
+sysctl -w vm.page-cluster="$MEMSWAP_TUNABLES_PAGE_CLUSTER"
+echo_t "System page cluster for SWAP set to ${MEMSWAP_TUNABLES_PAGE_CLUSTER}"
 
-# initialize the devices
-for i in $(seq ${NRDEVICES}); do
-    DEVNUMBER=$((i - 1))
-    echo $mem > /sys/block/zram${DEVNUMBER}/disksize
-    mkswap /dev/zram${DEVNUMBER}
-    swapon -p 5 /dev/zram${DEVNUMBER}
-done
+# Enable the ZRAM SWAP device
+mkswap /dev/zram0
+swapon /dev/zram0
