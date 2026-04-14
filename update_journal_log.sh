@@ -40,6 +40,18 @@ echo_t()
 
 JOURNAL_CRON_INSTALLED="/tmp/.journal_log_cron_flag"
 
+wait_for_cron() {
+    while true; do
+        CRON_PID=`pidof crond`
+
+        if [ -n "$CRON_PID" ]; then
+            break
+        else
+            sleep 5
+        fi
+    done
+}
+
 do_journal_iteration()
 {
    uptime_in_secs=$(cut -d. -f1 /proc/uptime)
@@ -151,7 +163,8 @@ fi
 execution_mode=$(cat "$RDKLOGGER_EXECUTION_MODE")
 
 if [ "$execution_mode" = "cron" ]; then
-	
+
+    wait_for_cron
     if [ ! -f "$JOURNAL_CRON_INSTALLED" ]; then
         install_cron_entry
         touch "$JOURNAL_CRON_INSTALLED"
