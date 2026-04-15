@@ -117,8 +117,8 @@ capture_top_snapshot()
     local label="$1"
     local output_file="/tmp/log_suppress_top_${label}.txt"
     
-    # Run top in batch mode, single iteration
-    top -b -n 1 2>/dev/null | head -n 5 > "$output_file"
+    # Run top in batch mode, single iteration (BusyBox compatible: use head -5 not head -n 5)
+    top -b -n 1 2>/dev/null | head -5 > "$output_file" 2>/dev/null
     
     # Parse CPU line: "CPU:   3% usr   6% sys   0% nic  89% idle..."
     # Or: "%Cpu(s):  3.0 us,  6.0 sy,  0.0 ni, 89.0 id..."
@@ -130,39 +130,64 @@ capture_top_snapshot()
     
     if echo "$cpu_line" | grep -q "CPU:"; then
         # Busybox format: "CPU:   3% usr   6% sys   0% nic  89% idle..."
-        usr_cpu=$(echo "$cpu_line" | sed 's/.*[[:space:]]\([0-9]*\)% usr.*/\1/')
-        sys_cpu=$(echo "$cpu_line" | sed 's/.*[[:space:]]\([0-9]*\)% sys.*/\1/')
-        idle_cpu=$(echo "$cpu_line" | sed 's/.*[[:space:]]\([0-9]*\)% idle.*/\1/')
+        usr_cpu=$(echo "$cpu_line" | sed 's/.*[[:space:]]\([0-9]*\)% usr.*/\1/' 2>/dev/null)
+        sys_cpu=$(echo "$cpu_line" | sed 's/.*[[:space:]]\([0-9]*\)% sys.*/\1/' 2>/dev/null)
+        idle_cpu=$(echo "$cpu_line" | sed 's/.*[[:space:]]\([0-9]*\)% idle.*/\1/' 2>/dev/null)
     else
         # Standard top format: "%Cpu(s):  3.0 us,  6.0 sy,  0.0 ni, 89.0 id..."
-        usr_cpu=$(echo "$cpu_line" | awk -F',' '{print $1}' | grep -oE '[0-9]+' | head -1)
-        sys_cpu=$(echo "$cpu_line" | awk -F',' '{print $2}' | grep -oE '[0-9]+' | head -1)
-        idle_cpu=$(echo "$cpu_line" | awk -F',' '{print $4}' | grep -oE '[0-9]+' | head -1)
+        # BusyBox compatible: avoid grep -oE, use awk instead
+        usr_cpu=$(echo "$cpu_line" | awk -F',' '{print $1}' | awk '{gsub(/[^0-9]/,"",$NF); print $NF}' 2>/dev/null)
+        sys_cpu=$(echo "$cpu_line" | awk -F',' '{print $2}' | awk '{gsub(/[^0-9]/,"",$NF); print $NF}' 2>/dev/null)
+        idle_cpu=$(echo "$cpu_line" | awk -F',' '{print $4}' | awk '{gsub(/[^0-9]/,"",$NF); print $NF}' 2>/dev/null)
     fi
     
-    # Handle empty values
+    # Handle empty values (ensure numeric)
+    usr_cpu=$(echo "$usr_cpu" | grep -E '^[0-9]+$' || echo 0)
+    sys_cpu=$(echo "$sys_cpu" | grep -E '^[0-9]+$' || echo 0)
+    idle_cpu=$(echo "$idle_cpu" | grep -E '^[0-9]+$' || echo 0)
     [ -z "$usr_cpu" ] && usr_cpu=0
     [ -z "$sys_cpu" ] && sys_cpu=0
     [ -z "$idle_cpu" ] && idle_cpu=0
     
     local total_cpu=$((usr_cpu + sys_cpu))
     
-    # Parse load average
-    local load_line=$(grep -E "load average:|average:" "$output_file" 2>/dev/null)
-    local load_avg=$(echo "$load_line" | sed 's/.*load average:[[:space:]]*//' | awk '{print $1, $2, $3}' | tr -d ',')
-    [ -z "$load_avg" ] && load_avg="0 0 0"
+    # Parse load average from /proc/loadavg (more reliable than parsing top output)
+    local load_avg="N/A"
+    if [ -r /proc/loadavg ]; then
+        load_avg=$(cat /proc/loadavg 2>/dev/null | awk '{print $1, $2, $3}')
+    else
+        # Fallback: try to parse from top output
+        local load_line=$(grep -i "load average" "$output_file" 2>/dev/null)
+        load_avg=$(echo "$load_line" | sed 's/.*load average:[[:space:]]*//' | awk '{print $1, $2, $3}' | tr -d ',' 2>/dev/null)
+    fi
+    [ -z "$load_avg" ] && load_avg="N/A"
     
-    # Get memory info from /proc/meminfo (more reliable)
+    # Get memory info - try /proc/meminfo with permission check
     local mem_used=0
     local mem_total=0
     local mem_pct=0
-    if [ -f /proc/meminfo ]; then
-        mem_total=$(grep MemTotal /proc/meminfo | awk '{print $2}')
-        local mem_free=$(grep MemFree /proc/meminfo | awk '{print $2}')
-        local mem_buffers=$(grep Buffers /proc/meminfo | awk '{print $2}')
-        local mem_cached=$(grep "^Cached:" /proc/meminfo | awk '{print $2}')
-        mem_used=$((mem_total - mem_free - mem_buffers - mem_cached))
-        [ "$mem_total" -gt 0 ] && mem_pct=$((mem_used * 100 / mem_total))
+    if [ -r /proc/meminfo ]; then
+        mem_total=$(cat /proc/meminfo 2>/dev/null | grep MemTotal | awk '{print $2}')
+        local mem_free=$(cat /proc/meminfo 2>/dev/null | grep MemFree | awk '{print $2}')
+        local mem_buffers=$(cat /proc/meminfo 2>/dev/null | grep Buffers | awk '{print $2}')
+        local mem_cached=$(cat /proc/meminfo 2>/dev/null | grep "^Cached:" | awk '{print $2}')
+        # Ensure numeric values
+        mem_total=${mem_total:-0}
+        mem_free=${mem_free:-0}
+        mem_buffers=${mem_buffers:-0}
+        mem_cached=${mem_cached:-0}
+        if [ "$mem_total" -gt 0 ] 2>/dev/null; then
+            mem_used=$((mem_total - mem_free - mem_buffers - mem_cached))
+            mem_pct=$((mem_used * 100 / mem_total))
+        fi
+    else
+        # Fallback: try free command
+        local free_output=$(free 2>/dev/null | grep -i mem)
+        if [ -n "$free_output" ]; then
+            mem_total=$(echo "$free_output" | awk '{print $2}')
+            mem_used=$(echo "$free_output" | awk '{print $3}')
+            [ "$mem_total" -gt 0 ] 2>/dev/null && mem_pct=$((mem_used * 100 / mem_total))
+        fi
     fi
     
     log_cpu_overhead "[$label] CPU: ${total_cpu}% (usr:${usr_cpu}% sys:${sys_cpu}%) | Idle: ${idle_cpu}% | Load: $load_avg | Mem: ${mem_pct}%"
@@ -176,7 +201,7 @@ capture_top_snapshot()
     eval "STATE_${label}_MEM=$mem_pct"
     
     # Also save the raw top output
-    cat "$output_file"
+    cat "$output_file" 2>/dev/null
 }
 
 # Get process CPU time from /proc/self/stat (utime + stime in jiffies)
@@ -209,8 +234,9 @@ init_cpu_monitor()
 sample_cpu()
 {
     # Quick CPU check using /proc/stat (faster than top)
-    if [ -f /proc/stat ]; then
-        local cpu_line=$(head -n 1 /proc/stat)
+    if [ -r /proc/stat ]; then
+        # BusyBox compatible: use head -1 instead of head -n 1
+        local cpu_line=$(head -1 /proc/stat 2>/dev/null)
         local user=$(echo "$cpu_line" | awk '{print $2}')
         local nice=$(echo "$cpu_line" | awk '{print $3}')
         local system=$(echo "$cpu_line" | awk '{print $4}')
@@ -550,9 +576,16 @@ suppress_log_file_incremental()
     local new_lines=$(( total_lines - prev_offset ))
     echo_t "  [incremental] $(basename "$INPUT_FILE"): $prev_offset lines already processed, $new_lines new line(s) to suppress"
 
+    # Track input lines for statistics
+    TOTAL_INPUT_LINES=$((TOTAL_INPUT_LINES + new_lines))
+
     # Extract only the new lines into a temporary slice
     local SLICE_FILE="${OUTPUT_FILE}.slice.tmp"
     tail -n +"$(( prev_offset + 1 ))" "$INPUT_FILE" > "$SLICE_FILE"
+
+    # Count output lines before suppression
+    local output_before=0
+    [ -f "$OUTPUT_FILE" ] && output_before=$(wc -l < "$OUTPUT_FILE" 2>/dev/null)
 
     # First run: create the output file from scratch (overwrite)
     # Subsequent runs: append suppressed new lines to existing output
@@ -561,6 +594,12 @@ suppress_log_file_incremental()
     else
         suppress_log_file "$SLICE_FILE" "$OUTPUT_FILE" 1
     fi
+
+    # Count output lines after suppression
+    local output_after=$(wc -l < "$OUTPUT_FILE" 2>/dev/null)
+    local lines_written=$((output_after - output_before))
+    [ "$lines_written" -lt 0 ] && lines_written=$output_after
+    TOTAL_OUTPUT_LINES=$((TOTAL_OUTPUT_LINES + lines_written))
 
     rm -f "$SLICE_FILE"
 
@@ -578,6 +617,10 @@ suppress_logs_in_directory()
     local total=0
     local size_before=0
     local size_after=0
+
+    # Initialize line counters for this run
+    TOTAL_INPUT_LINES=0
+    TOTAL_OUTPUT_LINES=0
 
     # Start CPU monitoring
     init_cpu_monitor
@@ -614,7 +657,8 @@ suppress_logs_in_directory()
         FILENAME=$(basename "$file")
 
         # Skip files that are just offset markers (first line is just a number)
-        first_line=$(head -n 1 "$file" 2>/dev/null)
+        # BusyBox compatible: use head -1 instead of head -n 1
+        first_line=$(head -1 "$file" 2>/dev/null)
         line_count=$(wc -l < "$file" 2>/dev/null)
         if echo "$first_line" | grep -q "^[0-9]*$" && [ "$line_count" -le 2 ]; then
             continue
@@ -663,17 +707,17 @@ suppress_logs_in_directory()
         size_after=0
     fi
 
-    # Calculate size difference
-    size_diff=$((size_before - size_after))
-    if [ "$size_before" -gt 0 ]; then
-        percent_reduced=$((size_diff * 100 / size_before))
-    else
-        percent_reduced=0
+    # Calculate line-based reduction (more meaningful for incremental suppression)
+    local lines_saved=$((TOTAL_INPUT_LINES - TOTAL_OUTPUT_LINES))
+    local line_reduction_pct=0
+    if [ "$TOTAL_INPUT_LINES" -gt 0 ]; then
+        line_reduction_pct=$((lines_saved * 100 / TOTAL_INPUT_LINES))
     fi
 
     echo_t "Log suppression completed: Processed $processed/$total files"
-    echo_t "Size after suppression: ${size_after} KB"
-    echo_t "Size reduced: ${size_diff} KB (${percent_reduced}% reduction)"
+    echo_t "Lines processed this run: $TOTAL_INPUT_LINES input -> $TOTAL_OUTPUT_LINES output"
+    echo_t "Lines saved by suppression: $lines_saved lines (${line_reduction_pct}% reduction)"
+    echo_t "Current directory size: ${size_after} KB"
 
     # Report CPU overhead
     report_cpu_overhead
