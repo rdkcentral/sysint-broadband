@@ -408,6 +408,12 @@ syncLogs_nvram2()
 
     log_files_sync_to_nvram2 $option
 
+    # Apply log suppression to reduce repeated log patterns before upload
+    if [ -f "$RDK_LOGGER_PATH/log_suppress.sh" ]; then
+        echo_t "Applying log suppression to synced logs in $LOG_SYNC_PATH"
+        sh $RDK_LOGGER_PATH/log_suppress.sh "$LOG_SYNC_PATH"
+    fi
+
     if [ -f /tmp/backup_onboardlogs ]; then
         backup_onboarding_logs
     fi
