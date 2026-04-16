@@ -43,9 +43,13 @@ fi
 
 LOG_SUPPRESS_INPUT_DIR="$1"
 LOG_SUPPRESS_OUTPUT_DIR="$2"
+LOG_SUPPRESS_FRESH="$3"
 
 # If output directory not provided, use input directory (in-place)
-if [ -z "$LOG_SUPPRESS_OUTPUT_DIR" ]; then
+if [ -z "$LOG_SUPPRESS_OUTPUT_DIR" ] || [ "$LOG_SUPPRESS_OUTPUT_DIR" = "--fresh" ]; then
+    if [ "$LOG_SUPPRESS_OUTPUT_DIR" = "--fresh" ]; then
+        LOG_SUPPRESS_FRESH="--fresh"
+    fi
     LOG_SUPPRESS_OUTPUT_DIR="$LOG_SUPPRESS_INPUT_DIR"
     LOG_SUPPRESS_IN_PLACE=1
 else
@@ -54,7 +58,8 @@ fi
 
 # Check if input directory is provided
 if [ -z "$LOG_SUPPRESS_INPUT_DIR" ]; then
-    echo_t "Usage: $0 <input_directory> [output_directory]"
+    echo_t "Usage: $0 <input_directory> [output_directory] [--fresh]"
+    echo_t "  --fresh : Clear all offset files and reprocess all logs from scratch"
     exit 1
 fi
 
@@ -69,6 +74,12 @@ mkdir -p "$LOG_SUPPRESS_OUTPUT_DIR"
 # Directory to store offset files (tracks how many lines were already processed per file)
 OFFSET_DIR="$LOG_SUPPRESS_OUTPUT_DIR/.log_suppress_offsets"
 mkdir -p "$OFFSET_DIR"
+
+# Clear offsets if --fresh flag is provided
+if [ "$LOG_SUPPRESS_FRESH" = "--fresh" ]; then
+    echo_t "Fresh mode: Clearing all offset files to reprocess logs from scratch"
+    rm -f "$OFFSET_DIR"/*.offset 2>/dev/null
+fi
 
 # ------------------------------------------------------------
 # get_offset <offset_file>
@@ -103,6 +114,9 @@ set_offset()
 # Log file for CPU overhead reports
 CPU_OVERHEAD_LOG="/rdklogs/logs/log_suppress_cpu_overhead.txt"
 
+# Dedicated log file for suppression statistics
+LOG_SUPPRESS_STATS_LOG="/rdklogs/logs/log_suppress_stats.txt"
+
 # Log function that writes to both stdout and dedicated log file
 log_cpu_overhead()
 {
@@ -111,14 +125,36 @@ log_cpu_overhead()
     echo "`date +"%y%m%d-%T.%6N"` $msg" >> "$CPU_OVERHEAD_LOG" 2>/dev/null
 }
 
+# Log function for suppression statistics - writes to dedicated stats file
+log_suppress_stats()
+{
+    local msg="$1"
+    echo_t "$msg"
+    echo "`date +"%y%m%d-%T.%6N"` $msg" >> "$LOG_SUPPRESS_STATS_LOG" 2>/dev/null
+}
+
+# Log size tracking entry
+log_size_tracking()
+{
+    local stage="$1"
+    local dir="$2"
+    local size_kb="$3"
+    local timestamp=$(date +"%Y-%m-%d %H:%M:%S")
+    
+    # Log to stats file in CSV-like format for easy parsing
+    echo "${timestamp},${stage},${dir},${size_kb}KB" >> "$LOG_SUPPRESS_STATS_LOG" 2>/dev/null
+    echo_t "SIZE_TRACK [${stage}]: ${dir} = ${size_kb} KB"
+}
+
 # Capture CPU snapshot using top command
 capture_top_snapshot()
 {
     local label="$1"
     local output_file="/tmp/log_suppress_top_${label}.txt"
     
-    # Run top in batch mode, single iteration (BusyBox compatible: use head -5 not head -n 5)
-    top -b -n 1 2>/dev/null | head -5 > "$output_file" 2>/dev/null
+    # Run top in batch mode with 2 iterations to get actual CPU usage (first iteration is cumulative)
+    # BusyBox compatible: use head -5 not head -n 5
+    top -b -n 2 -d 1 2>/dev/null | tail -10 | head -5 > "$output_file" 2>/dev/null
     
     # Parse CPU line: "CPU:   3% usr   6% sys   0% nic  89% idle..."
     # Or: "%Cpu(s):  3.0 us,  6.0 sy,  0.0 ni, 89.0 id..."
@@ -563,21 +599,23 @@ suppress_log_file_incremental()
 
     # Count total lines in the source file
     local total_lines
-    total_lines=$(wc -l < "$INPUT_FILE" 2>/dev/null)
-    if [ -z "$total_lines" ]; then
+    total_lines=$(wc -l < "$INPUT_FILE" 2>/dev/null | tr -d ' ')
+    if [ -z "$total_lines" ] || ! echo "$total_lines" | grep -qE '^[0-9]+$'; then
         total_lines=0
     fi
 
     # Nothing new to process
     if [ "$total_lines" -le "$prev_offset" ]; then
+        # Track skipped files
+        TOTAL_SKIPPED_FILES=$((TOTAL_SKIPPED_FILES + 1))
         return 0
     fi
 
     local new_lines=$(( total_lines - prev_offset ))
     echo_t "  [incremental] $(basename "$INPUT_FILE"): $prev_offset lines already processed, $new_lines new line(s) to suppress"
 
-    # Track input lines for statistics
-    TOTAL_INPUT_LINES=$((TOTAL_INPUT_LINES + new_lines))
+    # Track input lines for statistics (use file for cross-function persistence)
+    echo "$new_lines" >> /tmp/.log_suppress_input_count
 
     # Extract only the new lines into a temporary slice
     local SLICE_FILE="${OUTPUT_FILE}.slice.tmp"
@@ -585,7 +623,7 @@ suppress_log_file_incremental()
 
     # Count output lines before suppression
     local output_before=0
-    [ -f "$OUTPUT_FILE" ] && output_before=$(wc -l < "$OUTPUT_FILE" 2>/dev/null)
+    [ -f "$OUTPUT_FILE" ] && output_before=$(wc -l < "$OUTPUT_FILE" 2>/dev/null | tr -d ' ')
 
     # First run: create the output file from scratch (overwrite)
     # Subsequent runs: append suppressed new lines to existing output
@@ -596,10 +634,12 @@ suppress_log_file_incremental()
     fi
 
     # Count output lines after suppression
-    local output_after=$(wc -l < "$OUTPUT_FILE" 2>/dev/null)
+    local output_after=$(wc -l < "$OUTPUT_FILE" 2>/dev/null | tr -d ' ')
     local lines_written=$((output_after - output_before))
     [ "$lines_written" -lt 0 ] && lines_written=$output_after
-    TOTAL_OUTPUT_LINES=$((TOTAL_OUTPUT_LINES + lines_written))
+    
+    # Track output lines (use file for cross-function persistence)
+    echo "$lines_written" >> /tmp/.log_suppress_output_count
 
     rm -f "$SLICE_FILE"
 
@@ -618,15 +658,28 @@ suppress_logs_in_directory()
     local size_before=0
     local size_after=0
 
-    # Initialize line counters for this run
-    TOTAL_INPUT_LINES=0
-    TOTAL_OUTPUT_LINES=0
+    # Initialize line counters for this run (using temp files for cross-function persistence)
+    rm -f /tmp/.log_suppress_input_count /tmp/.log_suppress_output_count
+    touch /tmp/.log_suppress_input_count /tmp/.log_suppress_output_count
+    TOTAL_SKIPPED_FILES=0
+
+    # Log suppression session start
+    log_suppress_stats "========================================================"
+    log_suppress_stats "LOG SUPPRESSION SESSION STARTED"
+    log_suppress_stats "========================================================"
+    log_suppress_stats "Input directory: $dir"
+    log_suppress_stats "Output directory: $outdir"
+    log_suppress_stats "Mode: $([ \"$LOG_SUPPRESS_IN_PLACE\" -eq 1 ] && echo 'In-place' || echo 'Separate output')"
 
     # Start CPU monitoring
     init_cpu_monitor
 
-    # Calculate total size before suppression
+    # Calculate total size BEFORE suppression (this is after nvram2 sync)
     size_before=$(du -sk "$dir" 2>/dev/null | awk '{print $1}')
+    [ -z "$size_before" ] && size_before=0
+    
+    # Log size at sync stage
+    log_size_tracking "AFTER_SYNC_BEFORE_SUPPRESS" "$dir" "$size_before"
     if [ -z "$size_before" ]; then
         size_before=0
     fi
@@ -707,17 +760,66 @@ suppress_logs_in_directory()
         size_after=0
     fi
 
-    # Calculate line-based reduction (more meaningful for incremental suppression)
+    # Log size AFTER suppression (ready for cloud upload)
+    log_size_tracking "AFTER_SUPPRESS_READY_FOR_UPLOAD" "$dir" "$size_after"
+
+    # Calculate size reduction
+    local size_saved=$((size_before - size_after))
+    local size_reduction_pct=0
+    if [ "$size_before" -gt 0 ]; then
+        size_reduction_pct=$((size_saved * 100 / size_before))
+    fi
+
+    # Calculate line-based reduction from temp files (sum all values)
+    local TOTAL_INPUT_LINES=0
+    local TOTAL_OUTPUT_LINES=0
+    if [ -f /tmp/.log_suppress_input_count ]; then
+        TOTAL_INPUT_LINES=$(awk '{s+=$1} END {print s+0}' /tmp/.log_suppress_input_count 2>/dev/null)
+    fi
+    if [ -f /tmp/.log_suppress_output_count ]; then
+        TOTAL_OUTPUT_LINES=$(awk '{s+=$1} END {print s+0}' /tmp/.log_suppress_output_count 2>/dev/null)
+    fi
+    
     local lines_saved=$((TOTAL_INPUT_LINES - TOTAL_OUTPUT_LINES))
     local line_reduction_pct=0
     if [ "$TOTAL_INPUT_LINES" -gt 0 ]; then
         line_reduction_pct=$((lines_saved * 100 / TOTAL_INPUT_LINES))
     fi
 
+    # Files with new content vs skipped (already up-to-date)
+    local files_with_new_content=$((processed - TOTAL_SKIPPED_FILES))
+
+    # Log comprehensive statistics to dedicated file
+    log_suppress_stats "--------------------------------------------------------"
+    log_suppress_stats "SUPPRESSION RESULTS:"
+    log_suppress_stats "--------------------------------------------------------"
+    log_suppress_stats "  Files processed: $processed/$total"
+    log_suppress_stats "  Files with new content: $files_with_new_content"
+    log_suppress_stats "  Files already up-to-date: $TOTAL_SKIPPED_FILES"
+    log_suppress_stats "--------------------------------------------------------"
+    log_suppress_stats "SIZE TRACKING:"
+    log_suppress_stats "  Size after sync (before suppression): ${size_before} KB"
+    log_suppress_stats "  Size after suppression (for upload):  ${size_after} KB"
+    log_suppress_stats "  Size saved: ${size_saved} KB (${size_reduction_pct}% reduction)"
+    log_suppress_stats "--------------------------------------------------------"
+    log_suppress_stats "LINE TRACKING:"
+    log_suppress_stats "  Lines input:  $TOTAL_INPUT_LINES"
+    log_suppress_stats "  Lines output: $TOTAL_OUTPUT_LINES"
+    log_suppress_stats "  Lines saved:  $lines_saved (${line_reduction_pct}% reduction)"
+    log_suppress_stats "--------------------------------------------------------"
+    log_suppress_stats "LOG SUPPRESSION SESSION ENDED"
+    log_suppress_stats "========================================================"
+    log_suppress_stats ""
+
+    # Also print summary to console
     echo_t "Log suppression completed: Processed $processed/$total files"
-    echo_t "Lines processed this run: $TOTAL_INPUT_LINES input -> $TOTAL_OUTPUT_LINES output"
-    echo_t "Lines saved by suppression: $lines_saved lines (${line_reduction_pct}% reduction)"
-    echo_t "Current directory size: ${size_after} KB"
+    echo_t "  Files with new content: $files_with_new_content, Already up-to-date: $TOTAL_SKIPPED_FILES"
+    echo_t "SIZE: Before=${size_before}KB -> After=${size_after}KB (saved ${size_saved}KB, ${size_reduction_pct}%)"
+    echo_t "LINES: ${TOTAL_INPUT_LINES} input -> ${TOTAL_OUTPUT_LINES} output (saved ${lines_saved}, ${line_reduction_pct}%)"
+    echo_t "Stats logged to: $LOG_SUPPRESS_STATS_LOG"
+
+    # Cleanup temp files
+    rm -f /tmp/.log_suppress_input_count /tmp/.log_suppress_output_count
 
     # Report CPU overhead
     report_cpu_overhead

@@ -406,6 +406,13 @@ syncLogs_nvram2()
         nice -n 19 journalctl -k --since "${difference_time} sec ago" >> ${DMESG_FILE}
     fi
 
+    # Log size BEFORE sync
+    LOG_SUPPRESS_STATS_LOG="/rdklogs/logs/log_suppress_stats.txt"
+    size_before_sync=$(du -sk "$LOG_PATH" 2>/dev/null | awk '{print $1}')
+    [ -z "$size_before_sync" ] && size_before_sync=0
+    echo "`date +"%y%m%d-%T.%6N"` SIZE_TRACK [BEFORE_SYNC]: $LOG_PATH = ${size_before_sync} KB" >> "$LOG_SUPPRESS_STATS_LOG" 2>/dev/null
+    echo_t "SIZE_TRACK [BEFORE_SYNC]: $LOG_PATH = ${size_before_sync} KB"
+
     log_files_sync_to_nvram2 $option
 
     # Apply log suppression to reduce repeated log patterns before upload
@@ -682,10 +689,19 @@ backupnvram2logs()
                 echo "tar activation logs from backupnvram2logs"
                 copy_onboardlogs "$LOG_SYNC_PATH"
                 tar -X $PATTERN_FILE -cvzf $MAC"_Logs_"$dt"_activation_log.tgz" $LOG_SYNC_PATH
+                TAR_FILE="$MAC"_Logs_"$dt"_activation_log.tgz""
                 rm -rf /tmp/backup_onboardlogs
             else
                 echo "tar logs from backupnvram2logs"
 	            tar -X $PATTERN_FILE -cvzf $MAC"_Logs_$dt.tgz" $LOG_SYNC_PATH
+	            TAR_FILE="$MAC"_Logs_$dt.tgz""
+	        fi
+	        # Log tar file size after suppression
+	        if [ -f "$TAR_FILE" ]; then
+	            TAR_SIZE_BYTES=`ls -l "$TAR_FILE" | awk '{print $5}'`
+	            TAR_SIZE_KB=$((TAR_SIZE_BYTES / 1024))
+	            echo "[`date '+%Y-%m-%d %H:%M:%S'`] SIZE_TRACK [TAR_AFTER_SUPPRESS] File=$TAR_FILE Size=${TAR_SIZE_KB}KB (${TAR_SIZE_BYTES} bytes)" >> /rdklogs/logs/log_suppress_stats.txt
+	            echo_t "RDK_LOGGER: Tar file size after suppression: ${TAR_SIZE_KB}KB ($TAR_FILE)"
 	        fi
         fi
 
@@ -787,10 +803,19 @@ backupnvram2logs_on_reboot()
 	    echo "tar activation logs from backupnvram2logs_on_reboot"
 	    copy_onboardlogs "$TarFolder"
 	    tar -X $PATTERN_FILE -cvzf $MAC"_Logs_"$dt"_activation_log.tgz" $TarFolder
+	    TAR_FILE="$MAC"_Logs_"$dt"_activation_log.tgz""
 	    rm -rf /tmp/backup_onboardlogs
     else
         echo "tar logs from backupnvram2logs_on_reboot"
 	    tar -X $PATTERN_FILE -cvzf $MAC"_Logs_$dt.tgz" $TarFolder
+	    TAR_FILE="$MAC"_Logs_$dt.tgz""
+    fi
+    # Log tar file size after suppression
+    if [ -f "$TAR_FILE" ]; then
+        TAR_SIZE_BYTES=`ls -l "$TAR_FILE" | awk '{print $5}'`
+        TAR_SIZE_KB=$((TAR_SIZE_BYTES / 1024))
+        echo "[`date '+%Y-%m-%d %H:%M:%S'`] SIZE_TRACK [TAR_AFTER_SUPPRESS] File=$TAR_FILE Size=${TAR_SIZE_KB}KB (${TAR_SIZE_BYTES} bytes)" >> /rdklogs/logs/log_suppress_stats.txt
+        echo_t "RDK_LOGGER: Tar file size after suppression: ${TAR_SIZE_KB}KB ($TAR_FILE)"
     fi
 	rm $PATTERN_FILE
 	
