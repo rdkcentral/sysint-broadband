@@ -18,7 +18,7 @@
 # limitations under the License.
 ##########################################################################
 #
-
+echo "RFC service START ing here ...: $(date)"
 . /etc/include.properties
 . /etc/device.properties
 
@@ -48,7 +48,9 @@ else
      if [ "x$BOX_TYPE" == "xTCCBR" ]; then
          sleep 300
      fi
+    echo "RFC MGR is called here ... : $(date)"
     /usr/bin/rfcMgr &
+    echo "RFC MGR execution finished here ... : $(date)"
 fi
-
+echo "RFC service END ing here ... : $(date)"
 
