@@ -35,9 +35,9 @@
 if [ -f /lib/rdk/utils.sh ]; then
     . /lib/rdk/utils.sh
 else
-    # Fallback echo_t function
+    # Fallback echo_t function (BusyBox compatible)
     echo_t() {
-        echo "`date +"%y%m%d-%T.%6N"` $1"
+        echo "`date '+%y%m%d-%T'` $1"
     }
 fi
 
@@ -122,7 +122,7 @@ log_cpu_overhead()
 {
     local msg="$1"
     echo_t "$msg"
-    echo "`date +"%y%m%d-%T.%6N"` $msg" >> "$CPU_OVERHEAD_LOG" 2>/dev/null
+    echo "[`date '+%Y-%m-%d %H:%M:%S'`] $msg" >> "$CPU_OVERHEAD_LOG" 2>/dev/null
 }
 
 # Log function for suppression statistics - writes to dedicated stats file
@@ -130,7 +130,7 @@ log_suppress_stats()
 {
     local msg="$1"
     echo_t "$msg"
-    echo "`date +"%y%m%d-%T.%6N"` $msg" >> "$LOG_SUPPRESS_STATS_LOG" 2>/dev/null
+    echo "[`date '+%Y-%m-%d %H:%M:%S'`] $msg" >> "$LOG_SUPPRESS_STATS_LOG" 2>/dev/null
 }
 
 # Log size tracking entry
@@ -139,10 +139,10 @@ log_size_tracking()
     local stage="$1"
     local dir="$2"
     local size_kb="$3"
-    local timestamp=$(date +"%Y-%m-%d %H:%M:%S")
+    local timestamp=`date '+%Y-%m-%d %H:%M:%S'`
     
-    # Log to stats file in CSV-like format for easy parsing
-    echo "${timestamp},${stage},${dir},${size_kb}KB" >> "$LOG_SUPPRESS_STATS_LOG" 2>/dev/null
+    # Log to stats file
+    echo "[$timestamp] SIZE_TRACK [$stage] $dir Size=${size_kb}KB" >> "$LOG_SUPPRESS_STATS_LOG" 2>/dev/null
     echo_t "SIZE_TRACK [${stage}]: ${dir} = ${size_kb} KB"
 }
 
@@ -370,7 +370,11 @@ suppress_log_file()
     local OUTPUT_FILE="$2"
     local APPEND_MODE="${3:-0}"
     local TEMP_FILE="${OUTPUT_FILE}.suppress.tmp"
+    local TEMP_FILE2="${OUTPUT_FILE}.suppress2.tmp"
 
+    # =========================================================================
+    # PASS 1: Consecutive pattern suppression (existing logic)
+    # =========================================================================
     awk '
 BEGIN {
     idx = 0

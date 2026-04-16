@@ -406,19 +406,50 @@ syncLogs_nvram2()
         nice -n 19 journalctl -k --since "${difference_time} sec ago" >> ${DMESG_FILE}
     fi
 
-    # Log size BEFORE sync
+    # Log size tracking for suppression analysis
     LOG_SUPPRESS_STATS_LOG="/rdklogs/logs/log_suppress_stats.txt"
-    size_before_sync=$(du -sk "$LOG_PATH" 2>/dev/null | awk '{print $1}')
+    TIMESTAMP=`date '+%Y-%m-%d %H:%M:%S'`
+    
+    # Ensure LOG_PATH is set (fallback to /rdklogs/logs if not set)
+    [ -z "$LOG_PATH" ] && LOG_PATH="/rdklogs/logs/"
+    
+    # Log size BEFORE sync
+    size_before_sync=`du -sk "$LOG_PATH" 2>/dev/null | awk '{print $1}'`
     [ -z "$size_before_sync" ] && size_before_sync=0
-    echo "`date +"%y%m%d-%T.%6N"` SIZE_TRACK [BEFORE_SYNC]: $LOG_PATH = ${size_before_sync} KB" >> "$LOG_SUPPRESS_STATS_LOG" 2>/dev/null
-    echo_t "SIZE_TRACK [BEFORE_SYNC]: $LOG_PATH = ${size_before_sync} KB"
+    echo "[$TIMESTAMP] SIZE_TRACK [BEFORE_SYNC] $LOG_PATH Size=${size_before_sync}KB" >> "$LOG_SUPPRESS_STATS_LOG"
+    echo_t "SIZE_TRACK [BEFORE_SYNC] $LOG_PATH Size=${size_before_sync}KB"
 
     log_files_sync_to_nvram2 $option
+
+    # Log size AFTER sync, BEFORE suppression
+    TIMESTAMP=`date '+%Y-%m-%d %H:%M:%S'`
+    size_after_sync=`du -sk "$LOG_SYNC_PATH" 2>/dev/null | awk '{print $1}'`
+    [ -z "$size_after_sync" ] && size_after_sync=0
+    echo "[$TIMESTAMP] SIZE_TRACK [AFTER_SYNC_BEFORE_SUPPRESS] $LOG_SYNC_PATH Size=${size_after_sync}KB" >> "$LOG_SUPPRESS_STATS_LOG"
+    echo_t "SIZE_TRACK [AFTER_SYNC_BEFORE_SUPPRESS] $LOG_SYNC_PATH Size=${size_after_sync}KB"
 
     # Apply log suppression to reduce repeated log patterns before upload
     if [ -f "$RDK_LOGGER_PATH/log_suppress.sh" ]; then
         echo_t "Applying log suppression to synced logs in $LOG_SYNC_PATH"
         sh $RDK_LOGGER_PATH/log_suppress.sh "$LOG_SYNC_PATH"
+        
+        # Log size AFTER suppression
+        TIMESTAMP=`date '+%Y-%m-%d %H:%M:%S'`
+        size_after_suppress=`du -sk "$LOG_SYNC_PATH" 2>/dev/null | awk '{print $1}'`
+        [ -z "$size_after_suppress" ] && size_after_suppress=0
+        echo "[$TIMESTAMP] SIZE_TRACK [AFTER_SUPPRESS] $LOG_SYNC_PATH Size=${size_after_suppress}KB" >> "$LOG_SUPPRESS_STATS_LOG"
+        echo_t "SIZE_TRACK [AFTER_SUPPRESS] $LOG_SYNC_PATH Size=${size_after_suppress}KB"
+        
+        # Calculate and log reduction
+        if [ "$size_after_sync" -gt 0 ]; then
+            reduction=$((size_after_sync - size_after_suppress))
+            reduction_pct=$((reduction * 100 / size_after_sync))
+            echo "[$TIMESTAMP] SIZE_TRACK [REDUCTION] Saved=${reduction}KB (${reduction_pct}%)" >> "$LOG_SUPPRESS_STATS_LOG"
+            echo_t "SIZE_TRACK [REDUCTION] Saved=${reduction}KB (${reduction_pct}%)"
+        fi
+    else
+        echo_t "log_suppress.sh not found at $RDK_LOGGER_PATH/log_suppress.sh - skipping suppression"
+        echo "[$TIMESTAMP] WARN: log_suppress.sh not found at $RDK_LOGGER_PATH/log_suppress.sh" >> "$LOG_SUPPRESS_STATS_LOG"
     fi
 
     if [ -f /tmp/backup_onboardlogs ]; then
