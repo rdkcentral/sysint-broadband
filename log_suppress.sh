@@ -151,14 +151,17 @@ capture_top_snapshot()
 {
     local label="$1"
     local output_file="/tmp/log_suppress_top_${label}.txt"
+    local raw_file="/tmp/log_suppress_top_raw_${label}.txt"
     
-    # Run top in batch mode with 2 iterations to get actual CPU usage (first iteration is cumulative)
-    # BusyBox compatible: use head -5 not head -n 5
-    top -b -n 2 -d 1 2>/dev/null | tail -10 | head -5 > "$output_file" 2>/dev/null
+    # Run top in batch mode - capture full output to temp file to avoid broken pipe
+    # BusyBox top: use -b for batch, -n 2 for 2 iterations, -d 1 for 1 sec delay
+    top -b -n 2 -d 1 > "$raw_file" 2>/dev/null
     
-    # Parse CPU line: "CPU:   3% usr   6% sys   0% nic  89% idle..."
-    # Or: "%Cpu(s):  3.0 us,  6.0 sy,  0.0 ni, 89.0 id..."
-    local cpu_line=$(grep -E "^(%Cpu|CPU:)" "$output_file" 2>/dev/null)
+    # Get the last CPU line (from 2nd iteration for real-time stats)
+    # BusyBox format: "CPU:   3% usr   6% sys   0% nic  89% idle..."
+    grep -E "^(CPU:|%Cpu)" "$raw_file" 2>/dev/null | tail -1 > "$output_file"
+    
+    local cpu_line=`cat "$output_file" 2>/dev/null`
     
     local usr_cpu=0
     local sys_cpu=0
@@ -166,78 +169,66 @@ capture_top_snapshot()
     
     if echo "$cpu_line" | grep -q "CPU:"; then
         # Busybox format: "CPU:   3% usr   6% sys   0% nic  89% idle..."
-        usr_cpu=$(echo "$cpu_line" | sed 's/.*[[:space:]]\([0-9]*\)% usr.*/\1/' 2>/dev/null)
-        sys_cpu=$(echo "$cpu_line" | sed 's/.*[[:space:]]\([0-9]*\)% sys.*/\1/' 2>/dev/null)
-        idle_cpu=$(echo "$cpu_line" | sed 's/.*[[:space:]]\([0-9]*\)% idle.*/\1/' 2>/dev/null)
-    else
+        usr_cpu=`echo "$cpu_line" | awk '{for(i=1;i<=NF;i++) if($i=="usr") print $(i-1)}' | tr -d '%'`
+        sys_cpu=`echo "$cpu_line" | awk '{for(i=1;i<=NF;i++) if($i=="sys") print $(i-1)}' | tr -d '%'`
+        idle_cpu=`echo "$cpu_line" | awk '{for(i=1;i<=NF;i++) if($i=="idle") print $(i-1)}' | tr -d '%'`
+    elif echo "$cpu_line" | grep -q "%Cpu"; then
         # Standard top format: "%Cpu(s):  3.0 us,  6.0 sy,  0.0 ni, 89.0 id..."
-        # BusyBox compatible: avoid grep -oE, use awk instead
-        usr_cpu=$(echo "$cpu_line" | awk -F',' '{print $1}' | awk '{gsub(/[^0-9]/,"",$NF); print $NF}' 2>/dev/null)
-        sys_cpu=$(echo "$cpu_line" | awk -F',' '{print $2}' | awk '{gsub(/[^0-9]/,"",$NF); print $NF}' 2>/dev/null)
-        idle_cpu=$(echo "$cpu_line" | awk -F',' '{print $4}' | awk '{gsub(/[^0-9]/,"",$NF); print $NF}' 2>/dev/null)
+        usr_cpu=`echo "$cpu_line" | awk -F',' '{print $1}' | awk '{print $NF}' | cut -d'.' -f1`
+        sys_cpu=`echo "$cpu_line" | awk -F',' '{print $2}' | awk '{print $NF}' | cut -d'.' -f1`
+        idle_cpu=`echo "$cpu_line" | awk -F',' '{print $4}' | awk '{print $NF}' | cut -d'.' -f1`
     fi
     
-    # Handle empty values (ensure numeric)
-    usr_cpu=$(echo "$usr_cpu" | grep -E '^[0-9]+$' || echo 0)
-    sys_cpu=$(echo "$sys_cpu" | grep -E '^[0-9]+$' || echo 0)
-    idle_cpu=$(echo "$idle_cpu" | grep -E '^[0-9]+$' || echo 0)
+    # Handle empty/invalid values (ensure numeric)
     [ -z "$usr_cpu" ] && usr_cpu=0
     [ -z "$sys_cpu" ] && sys_cpu=0
     [ -z "$idle_cpu" ] && idle_cpu=0
+    
+    # Validate numeric
+    echo "$usr_cpu" | grep -qE '^[0-9]+$' || usr_cpu=0
+    echo "$sys_cpu" | grep -qE '^[0-9]+$' || sys_cpu=0
+    echo "$idle_cpu" | grep -qE '^[0-9]+$' || idle_cpu=0
     
     local total_cpu=$((usr_cpu + sys_cpu))
     
     # Parse load average from /proc/loadavg (more reliable than parsing top output)
     local load_avg="N/A"
     if [ -r /proc/loadavg ]; then
-        load_avg=$(cat /proc/loadavg 2>/dev/null | awk '{print $1, $2, $3}')
-    else
-        # Fallback: try to parse from top output
-        local load_line=$(grep -i "load average" "$output_file" 2>/dev/null)
-        load_avg=$(echo "$load_line" | sed 's/.*load average:[[:space:]]*//' | awk '{print $1, $2, $3}' | tr -d ',' 2>/dev/null)
+        load_avg=`cat /proc/loadavg 2>/dev/null | awk '{print $1, $2, $3}'`
     fi
     [ -z "$load_avg" ] && load_avg="N/A"
     
-    # Get memory info - try /proc/meminfo with permission check
-    local mem_used=0
-    local mem_total=0
+    # Get memory info from /proc/meminfo
     local mem_pct=0
     if [ -r /proc/meminfo ]; then
-        mem_total=$(cat /proc/meminfo 2>/dev/null | grep MemTotal | awk '{print $2}')
-        local mem_free=$(cat /proc/meminfo 2>/dev/null | grep MemFree | awk '{print $2}')
-        local mem_buffers=$(cat /proc/meminfo 2>/dev/null | grep Buffers | awk '{print $2}')
-        local mem_cached=$(cat /proc/meminfo 2>/dev/null | grep "^Cached:" | awk '{print $2}')
+        local mem_total=`grep MemTotal /proc/meminfo 2>/dev/null | awk '{print $2}'`
+        local mem_free=`grep MemFree /proc/meminfo 2>/dev/null | awk '{print $2}'`
+        local mem_buffers=`grep Buffers /proc/meminfo 2>/dev/null | awk '{print $2}'`
+        local mem_cached=`grep "^Cached:" /proc/meminfo 2>/dev/null | awk '{print $2}'`
         # Ensure numeric values
         mem_total=${mem_total:-0}
         mem_free=${mem_free:-0}
         mem_buffers=${mem_buffers:-0}
         mem_cached=${mem_cached:-0}
         if [ "$mem_total" -gt 0 ] 2>/dev/null; then
-            mem_used=$((mem_total - mem_free - mem_buffers - mem_cached))
+            local mem_used=$((mem_total - mem_free - mem_buffers - mem_cached))
             mem_pct=$((mem_used * 100 / mem_total))
-        fi
-    else
-        # Fallback: try free command
-        local free_output=$(free 2>/dev/null | grep -i mem)
-        if [ -n "$free_output" ]; then
-            mem_total=$(echo "$free_output" | awk '{print $2}')
-            mem_used=$(echo "$free_output" | awk '{print $3}')
-            [ "$mem_total" -gt 0 ] 2>/dev/null && mem_pct=$((mem_used * 100 / mem_total))
         fi
     fi
     
+    # Clean up raw file
+    rm -f "$raw_file"
+    
     log_cpu_overhead "[$label] CPU: ${total_cpu}% (usr:${usr_cpu}% sys:${sys_cpu}%) | Idle: ${idle_cpu}% | Load: $load_avg | Mem: ${mem_pct}%"
     
-    # Store values for comparison
-    eval "STATE_${label}_USR=$usr_cpu"
-    eval "STATE_${label}_SYS=$sys_cpu"
-    eval "STATE_${label}_IDLE=$idle_cpu"
-    eval "STATE_${label}_TOTAL=$total_cpu"
-    eval "STATE_${label}_LOAD=\"$load_avg\""
-    eval "STATE_${label}_MEM=$mem_pct"
-    
-    # Also save the raw top output
-    cat "$output_file" 2>/dev/null
+    # Store values in temp files for later comparison (more portable than eval)
+    local state_file="/tmp/log_suppress_state_${label}.txt"
+    echo "USR=$usr_cpu" > "$state_file"
+    echo "SYS=$sys_cpu" >> "$state_file"
+    echo "IDLE=$idle_cpu" >> "$state_file"
+    echo "TOTAL=$total_cpu" >> "$state_file"
+    echo "LOAD=$load_avg" >> "$state_file"
+    echo "MEM=$mem_pct" >> "$state_file"
 }
 
 # Get process CPU time from /proc/self/stat (utime + stime in jiffies)
@@ -259,8 +250,8 @@ init_cpu_monitor()
     log_cpu_overhead "╚════════════════════════════════════════════════════════════╝"
     capture_top_snapshot "BEFORE"
     
-    CPU_MON_START_SEC=$(date +%s)
-    CPU_MON_START_PROC=$(get_proc_cpu_time)
+    CPU_MON_START_SEC=`date +%s`
+    CPU_MON_START_PROC=`get_proc_cpu_time`
     CPU_MON_PEAK_TOTAL=0
     CPU_MON_SAMPLES=0
     CPU_MON_SUM=0
@@ -272,11 +263,11 @@ sample_cpu()
     # Quick CPU check using /proc/stat (faster than top)
     if [ -r /proc/stat ]; then
         # BusyBox compatible: use head -1 instead of head -n 1
-        local cpu_line=$(head -1 /proc/stat 2>/dev/null)
-        local user=$(echo "$cpu_line" | awk '{print $2}')
-        local nice=$(echo "$cpu_line" | awk '{print $3}')
-        local system=$(echo "$cpu_line" | awk '{print $4}')
-        local idle=$(echo "$cpu_line" | awk '{print $5}')
+        local cpu_line=`head -1 /proc/stat 2>/dev/null`
+        local user=`echo "$cpu_line" | awk '{print $2}'`
+        local nice=`echo "$cpu_line" | awk '{print $3}'`
+        local system=`echo "$cpu_line" | awk '{print $4}'`
+        local idle=`echo "$cpu_line" | awk '{print $5}'`
         local total=$((user + nice + system + idle))
         local active=$((user + nice + system))
         
@@ -293,8 +284,8 @@ sample_cpu()
 # Report CPU overhead statistics
 report_cpu_overhead()
 {
-    local end_sec=$(date +%s)
-    local end_proc=$(get_proc_cpu_time)
+    local end_sec=`date +%s`
+    local end_proc=`get_proc_cpu_time`
     
     # Elapsed time
     local elapsed=$((end_sec - CPU_MON_START_SEC))
@@ -309,12 +300,48 @@ report_cpu_overhead()
     log_cpu_overhead "╚════════════════════════════════════════════════════════════╝"
     capture_top_snapshot "AFTER"
     
+    # Read state values from temp files
+    local STATE_BEFORE_USR=0 STATE_BEFORE_SYS=0 STATE_BEFORE_IDLE=0 STATE_BEFORE_TOTAL=0 STATE_BEFORE_LOAD="N/A" STATE_BEFORE_MEM=0
+    local STATE_AFTER_USR=0 STATE_AFTER_SYS=0 STATE_AFTER_IDLE=0 STATE_AFTER_TOTAL=0 STATE_AFTER_LOAD="N/A" STATE_AFTER_MEM=0
+    
+    if [ -f /tmp/log_suppress_state_BEFORE.txt ]; then
+        STATE_BEFORE_USR=`grep "^USR=" /tmp/log_suppress_state_BEFORE.txt 2>/dev/null | cut -d'=' -f2`
+        STATE_BEFORE_SYS=`grep "^SYS=" /tmp/log_suppress_state_BEFORE.txt 2>/dev/null | cut -d'=' -f2`
+        STATE_BEFORE_IDLE=`grep "^IDLE=" /tmp/log_suppress_state_BEFORE.txt 2>/dev/null | cut -d'=' -f2`
+        STATE_BEFORE_TOTAL=`grep "^TOTAL=" /tmp/log_suppress_state_BEFORE.txt 2>/dev/null | cut -d'=' -f2`
+        STATE_BEFORE_LOAD=`grep "^LOAD=" /tmp/log_suppress_state_BEFORE.txt 2>/dev/null | cut -d'=' -f2-`
+        STATE_BEFORE_MEM=`grep "^MEM=" /tmp/log_suppress_state_BEFORE.txt 2>/dev/null | cut -d'=' -f2`
+    fi
+    
+    if [ -f /tmp/log_suppress_state_AFTER.txt ]; then
+        STATE_AFTER_USR=`grep "^USR=" /tmp/log_suppress_state_AFTER.txt 2>/dev/null | cut -d'=' -f2`
+        STATE_AFTER_SYS=`grep "^SYS=" /tmp/log_suppress_state_AFTER.txt 2>/dev/null | cut -d'=' -f2`
+        STATE_AFTER_IDLE=`grep "^IDLE=" /tmp/log_suppress_state_AFTER.txt 2>/dev/null | cut -d'=' -f2`
+        STATE_AFTER_TOTAL=`grep "^TOTAL=" /tmp/log_suppress_state_AFTER.txt 2>/dev/null | cut -d'=' -f2`
+        STATE_AFTER_LOAD=`grep "^LOAD=" /tmp/log_suppress_state_AFTER.txt 2>/dev/null | cut -d'=' -f2-`
+        STATE_AFTER_MEM=`grep "^MEM=" /tmp/log_suppress_state_AFTER.txt 2>/dev/null | cut -d'=' -f2`
+    fi
+    
+    # Ensure numeric defaults
+    [ -z "$STATE_BEFORE_USR" ] && STATE_BEFORE_USR=0
+    [ -z "$STATE_BEFORE_SYS" ] && STATE_BEFORE_SYS=0
+    [ -z "$STATE_BEFORE_IDLE" ] && STATE_BEFORE_IDLE=0
+    [ -z "$STATE_BEFORE_TOTAL" ] && STATE_BEFORE_TOTAL=0
+    [ -z "$STATE_BEFORE_MEM" ] && STATE_BEFORE_MEM=0
+    [ -z "$STATE_AFTER_USR" ] && STATE_AFTER_USR=0
+    [ -z "$STATE_AFTER_SYS" ] && STATE_AFTER_SYS=0
+    [ -z "$STATE_AFTER_IDLE" ] && STATE_AFTER_IDLE=0
+    [ -z "$STATE_AFTER_TOTAL" ] && STATE_AFTER_TOTAL=0
+    [ -z "$STATE_AFTER_MEM" ] && STATE_AFTER_MEM=0
+    [ -z "$STATE_BEFORE_LOAD" ] && STATE_BEFORE_LOAD="N/A"
+    [ -z "$STATE_AFTER_LOAD" ] && STATE_AFTER_LOAD="N/A"
+    
     # Calculate CPU spike
     local cpu_spike=$((STATE_AFTER_TOTAL - STATE_BEFORE_TOTAL))
-    [ "$cpu_spike" -lt 0 ] && cpu_spike=0
+    [ "$cpu_spike" -lt 0 ] 2>/dev/null && cpu_spike=0
     
     local idle_drop=$((STATE_BEFORE_IDLE - STATE_AFTER_IDLE))
-    [ "$idle_drop" -lt 0 ] && idle_drop=0
+    [ "$idle_drop" -lt 0 ] 2>/dev/null && idle_drop=0
     
     log_cpu_overhead ""
     log_cpu_overhead "╔════════════════════════════════════════════════════════════════════╗"
@@ -357,6 +384,7 @@ report_cpu_overhead()
     
     # Cleanup temp files
     rm -f /tmp/log_suppress_top_BEFORE.txt /tmp/log_suppress_top_AFTER.txt
+    rm -f /tmp/log_suppress_state_BEFORE.txt /tmp/log_suppress_state_AFTER.txt
 }
 
 # Function to suppress logs in a single file (or a stream of new lines)
@@ -673,7 +701,11 @@ suppress_logs_in_directory()
     log_suppress_stats "========================================================"
     log_suppress_stats "Input directory: $dir"
     log_suppress_stats "Output directory: $outdir"
-    log_suppress_stats "Mode: $([ \"$LOG_SUPPRESS_IN_PLACE\" -eq 1 ] && echo 'In-place' || echo 'Separate output')"
+    if [ "$LOG_SUPPRESS_IN_PLACE" -eq 1 ]; then
+        log_suppress_stats "Mode: In-place"
+    else
+        log_suppress_stats "Mode: Separate output"
+    fi
 
     # Start CPU monitoring
     init_cpu_monitor
