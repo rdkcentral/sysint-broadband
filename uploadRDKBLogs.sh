@@ -567,11 +567,11 @@ HttpLogUpload()
         # Track file size being uploaded to cloud
         LOG_SUPPRESS_STATS_LOG="/rdklogs/logs/log_suppress_stats.txt"
         if [ -f "$UploadFile" ]; then
-            upload_file_size=$(du -sk "$UploadFile" 2>/dev/null | awk '{print $1}')
-            upload_file_size_bytes=$(ls -l "$UploadFile" 2>/dev/null | awk '{print $5}')
+            upload_file_size=`du -sk "$UploadFile" 2>/dev/null | awk '{print $1}'`
+            upload_file_size_bytes=`ls -l "$UploadFile" 2>/dev/null | awk '{print $5}'`
             [ -z "$upload_file_size" ] && upload_file_size=0
             [ -z "$upload_file_size_bytes" ] && upload_file_size_bytes=0
-            echo "`date +"%y%m%d-%T.%6N"` SIZE_TRACK [UPLOAD_TO_CLOUD]: File=$UploadFile, Size=${upload_file_size}KB (${upload_file_size_bytes} bytes)" >> "$LOG_SUPPRESS_STATS_LOG" 2>/dev/null
+            echo "[`date '+%Y-%m-%d %H:%M:%S'`] SIZE_TRACK [UPLOAD_TO_CLOUD] File=$UploadFile Size=${upload_file_size}KB (${upload_file_size_bytes} bytes)" >> "$LOG_SUPPRESS_STATS_LOG" 2>/dev/null
             echo_t "SIZE_TRACK [UPLOAD_TO_CLOUD]: $UploadFile = ${upload_file_size} KB (${upload_file_size_bytes} bytes)"
         fi
         
@@ -685,7 +685,7 @@ HttpLogUpload()
 		t2CountNotify "SYS_INFO_LOGS_UPLOADED"
                 # Log successful upload with file size
                 LOG_SUPPRESS_STATS_LOG="/rdklogs/logs/log_suppress_stats.txt"
-                echo "`date +"%y%m%d-%T.%6N"` UPLOAD_SUCCESS: File=$UploadFile uploaded to cloud successfully" >> "$LOG_SUPPRESS_STATS_LOG" 2>/dev/null
+                echo "[`date '+%Y-%m-%d %H:%M:%S'`] UPLOAD_SUCCESS: File=$UploadFile uploaded to cloud successfully" >> "$LOG_SUPPRESS_STATS_LOG" 2>/dev/null
                 rm -rf $UploadFile
 		if [ -f "$PRESERVE_LOG_PATH/$UploadFile" ] && [ "$UploadPath" != "$PRESERVE_LOG_PATH" ]; then #Remove from backup.
 		   rm -rf "$PRESERVE_LOG_PATH/$UploadFile"
@@ -701,7 +701,7 @@ HttpLogUpload()
                     echo_t "LOGS UPLOAD FAILED, RETURN CODE: $http_code"
                     # Log failed upload
                     LOG_SUPPRESS_STATS_LOG="/rdklogs/logs/log_suppress_stats.txt"
-                    echo "`date +"%y%m%d-%T.%6N"` UPLOAD_FAILED: File=$UploadFile, HTTP_CODE=$http_code" >> "$LOG_SUPPRESS_STATS_LOG" 2>/dev/null
+                    echo "[`date '+%Y-%m-%d %H:%M:%S'`] UPLOAD_FAILED: File=$UploadFile HTTP_CODE=$http_code" >> "$LOG_SUPPRESS_STATS_LOG" 2>/dev/null
                     preserveThisLog $UploadFile $UploadPath
                 fi
             fi

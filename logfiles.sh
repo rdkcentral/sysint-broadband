@@ -429,9 +429,10 @@ syncLogs_nvram2()
     echo_t "SIZE_TRACK [AFTER_SYNC_BEFORE_SUPPRESS] $LOG_SYNC_PATH Size=${size_after_sync}KB"
 
     # Apply log suppression to reduce repeated log patterns before upload
+    # Use --fresh flag because sync copies fresh files each time, offsets must be reset
     if [ -f "$RDK_LOGGER_PATH/log_suppress.sh" ]; then
         echo_t "Applying log suppression to synced logs in $LOG_SYNC_PATH"
-        sh $RDK_LOGGER_PATH/log_suppress.sh "$LOG_SYNC_PATH"
+        sh $RDK_LOGGER_PATH/log_suppress.sh "$LOG_SYNC_PATH" --fresh
         
         # Log size AFTER suppression
         TIMESTAMP=`date '+%Y-%m-%d %H:%M:%S'`
