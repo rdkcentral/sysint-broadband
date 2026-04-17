@@ -421,35 +421,15 @@ syncLogs_nvram2()
 
     log_files_sync_to_nvram2 $option
 
-    # Log size AFTER sync, BEFORE suppression
-    TIMESTAMP=`date '+%Y-%m-%d %H:%M:%S'`
-    size_after_sync=`du -sk "$LOG_SYNC_PATH" 2>/dev/null | awk '{print $1}'`
-    [ -z "$size_after_sync" ] && size_after_sync=0
-    echo "[$TIMESTAMP] SIZE_TRACK [AFTER_SYNC_BEFORE_SUPPRESS] $LOG_SYNC_PATH Size=${size_after_sync}KB" >> "$LOG_SUPPRESS_STATS_LOG"
-    echo_t "SIZE_TRACK [AFTER_SYNC_BEFORE_SUPPRESS] $LOG_SYNC_PATH Size=${size_after_sync}KB"
-
     # Apply log suppression to reduce repeated log patterns before upload
     # Use --fresh flag because sync copies fresh files each time, offsets must be reset
+    # Size tracking (AFTER_SYNC, AFTER_SUPPRESS, REDUCTION) is handled inside log_suppress.sh
     if [ -f "$RDK_LOGGER_PATH/log_suppress.sh" ]; then
         echo_t "Applying log suppression to synced logs in $LOG_SYNC_PATH"
         sh $RDK_LOGGER_PATH/log_suppress.sh "$LOG_SYNC_PATH" --fresh
-        
-        # Log size AFTER suppression
-        TIMESTAMP=`date '+%Y-%m-%d %H:%M:%S'`
-        size_after_suppress=`du -sk "$LOG_SYNC_PATH" 2>/dev/null | awk '{print $1}'`
-        [ -z "$size_after_suppress" ] && size_after_suppress=0
-        echo "[$TIMESTAMP] SIZE_TRACK [AFTER_SUPPRESS] $LOG_SYNC_PATH Size=${size_after_suppress}KB" >> "$LOG_SUPPRESS_STATS_LOG"
-        echo_t "SIZE_TRACK [AFTER_SUPPRESS] $LOG_SYNC_PATH Size=${size_after_suppress}KB"
-        
-        # Calculate and log reduction
-        if [ "$size_after_sync" -gt 0 ]; then
-            reduction=$((size_after_sync - size_after_suppress))
-            reduction_pct=$((reduction * 100 / size_after_sync))
-            echo "[$TIMESTAMP] SIZE_TRACK [REDUCTION] Saved=${reduction}KB (${reduction_pct}%)" >> "$LOG_SUPPRESS_STATS_LOG"
-            echo_t "SIZE_TRACK [REDUCTION] Saved=${reduction}KB (${reduction_pct}%)"
-        fi
     else
         echo_t "log_suppress.sh not found at $RDK_LOGGER_PATH/log_suppress.sh - skipping suppression"
+        TIMESTAMP=`date '+%Y-%m-%d %H:%M:%S'`
         echo "[$TIMESTAMP] WARN: log_suppress.sh not found at $RDK_LOGGER_PATH/log_suppress.sh" >> "$LOG_SUPPRESS_STATS_LOG"
     fi
 

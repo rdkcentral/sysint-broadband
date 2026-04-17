@@ -710,15 +710,17 @@ suppress_logs_in_directory()
     # Start CPU monitoring
     init_cpu_monitor
 
-    # Calculate total size BEFORE suppression (this is after nvram2 sync)
-    size_before=$(du -sk "$dir" 2>/dev/null | awk '{print $1}')
-    [ -z "$size_before" ] && size_before=0
+    # Calculate total size BEFORE suppression (excluding offsets dir)
+    # Measure BEFORE the offset clearing and processing to get pure log size
+    offset_size_before=`du -sk "$OFFSET_DIR" 2>/dev/null | awk '{print $1}'`
+    [ -z "$offset_size_before" ] && offset_size_before=0
+    total_dir_before=`du -sk "$dir" 2>/dev/null | awk '{print $1}'`
+    [ -z "$total_dir_before" ] && total_dir_before=0
+    size_before=$((total_dir_before - offset_size_before))
+    [ "$size_before" -lt 0 ] 2>/dev/null && size_before=0
     
     # Log size at sync stage
     log_size_tracking "AFTER_SYNC_BEFORE_SUPPRESS" "$dir" "$size_before"
-    if [ -z "$size_before" ]; then
-        size_before=0
-    fi
 
     # Count total files
     for file in "$dir"/*; do
@@ -775,24 +777,17 @@ suppress_logs_in_directory()
     done
 
     # Calculate total size after suppression, excluding the offset tracking directory
+    # BusyBox du does not support --exclude, so subtract offset dir size manually
+    offset_size_after=`du -sk "$OFFSET_DIR" 2>/dev/null | awk '{print $1}'`
+    [ -z "$offset_size_after" ] && offset_size_after=0
     if [ "$LOG_SUPPRESS_IN_PLACE" -eq 1 ]; then
-        size_after=$(du -sk --exclude=".log_suppress_offsets" "$dir" 2>/dev/null | awk '{print $1}')
-        # Fallback for systems where --exclude is unsupported (e.g. busybox du)
-        if [ -z "$size_after" ]; then
-            offset_size=$(du -sk "$OFFSET_DIR" 2>/dev/null | awk '{print $1}')
-            size_after=$(du -sk "$dir" 2>/dev/null | awk '{print $1}')
-            size_after=$(( ${size_after:-0} - ${offset_size:-0} ))
-        fi
+        total_dir_after=`du -sk "$dir" 2>/dev/null | awk '{print $1}'`
     else
-        size_after=$(du -sk --exclude=".log_suppress_offsets" "$outdir" 2>/dev/null | awk '{print $1}')
-        # Fallback for systems where --exclude is unsupported (e.g. busybox du)
-        if [ -z "$size_after" ]; then
-            offset_size=$(du -sk "$OFFSET_DIR" 2>/dev/null | awk '{print $1}')
-            size_after=$(du -sk "$outdir" 2>/dev/null | awk '{print $1}')
-            size_after=$(( ${size_after:-0} - ${offset_size:-0} ))
-        fi
+        total_dir_after=`du -sk "$outdir" 2>/dev/null | awk '{print $1}'`
     fi
-    if [ -z "$size_after" ] || [ "$size_after" -lt 0 ]; then
+    [ -z "$total_dir_after" ] && total_dir_after=0
+    size_after=$((total_dir_after - offset_size_after))
+    if [ "$size_after" -lt 0 ] 2>/dev/null; then
         size_after=0
     fi
 
