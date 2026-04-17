@@ -687,11 +687,8 @@ HttpLogUpload()
                 LOG_SUPPRESS_STATS_LOG="/rdklogs/logs/log_suppress_stats.txt"
                 echo "[`date '+%Y-%m-%d %H:%M:%S'`] UPLOAD_SUCCESS: File=$UploadFile uploaded to cloud successfully" >> "$LOG_SUPPRESS_STATS_LOG" 2>/dev/null
                 # Clear suppression offsets after successful upload so next cycle reprocesses fresh
-                if [ -d "$LOG_SYNC_BACK_UP_PATH/.log_suppress_offsets" ]; then
-                    rm -f "$LOG_SYNC_BACK_UP_PATH/.log_suppress_offsets"/*.offset 2>/dev/null
-                    echo_t "Cleared log suppression offsets after successful upload"
-                elif [ -d "$LOG_SYNC_PATH/.log_suppress_offsets" ]; then
-                    rm -f "$LOG_SYNC_PATH/.log_suppress_offsets"/*.offset 2>/dev/null
+                if [ -d "/nvram2/.log_suppress_offsets" ]; then
+                    rm -f /nvram2/.log_suppress_offsets/*.offset 2>/dev/null
                     echo_t "Cleared log suppression offsets after successful upload"
                 fi
                 rm -rf $UploadFile
@@ -833,11 +830,8 @@ HttpLogUpload()
 		    t2CountNotify "SYS_INFO_LOGS_UPLOADED"
                     result=0
                     # Clear suppression offsets after successful upload so next cycle reprocesses fresh
-                    if [ -d "$LOG_SYNC_BACK_UP_PATH/.log_suppress_offsets" ]; then
-                        rm -f "$LOG_SYNC_BACK_UP_PATH/.log_suppress_offsets"/*.offset 2>/dev/null
-                        echo_t "Cleared log suppression offsets after successful upload"
-                    elif [ -d "$LOG_SYNC_PATH/.log_suppress_offsets" ]; then
-                        rm -f "$LOG_SYNC_PATH/.log_suppress_offsets"/*.offset 2>/dev/null
+                    if [ -d "/nvram2/.log_suppress_offsets" ]; then
+                        rm -f /nvram2/.log_suppress_offsets/*.offset 2>/dev/null
                         echo_t "Cleared log suppression offsets after successful upload"
                     fi
                     rm -rf $UploadFile

@@ -75,7 +75,8 @@ fi
 mkdir -p "$LOG_SUPPRESS_OUTPUT_DIR"
 
 # Directory to store offset files (tracks how many lines were already processed per file)
-OFFSET_DIR="$LOG_SUPPRESS_OUTPUT_DIR/.log_suppress_offsets"
+# Store in /nvram2 directly, not inside /nvram2/logs, so offsets survive log cleanup
+OFFSET_DIR="/nvram2/.log_suppress_offsets"
 mkdir -p "$OFFSET_DIR"
 
 # ------------------------------------------------------------
