@@ -686,6 +686,14 @@ HttpLogUpload()
                 # Log successful upload with file size
                 LOG_SUPPRESS_STATS_LOG="/rdklogs/logs/log_suppress_stats.txt"
                 echo "[`date '+%Y-%m-%d %H:%M:%S'`] UPLOAD_SUCCESS: File=$UploadFile uploaded to cloud successfully" >> "$LOG_SUPPRESS_STATS_LOG" 2>/dev/null
+                # Clear suppression offsets after successful upload so next cycle reprocesses fresh
+                if [ -d "$LOG_SYNC_BACK_UP_PATH/.log_suppress_offsets" ]; then
+                    rm -f "$LOG_SYNC_BACK_UP_PATH/.log_suppress_offsets"/*.offset 2>/dev/null
+                    echo_t "Cleared log suppression offsets after successful upload"
+                elif [ -d "$LOG_SYNC_PATH/.log_suppress_offsets" ]; then
+                    rm -f "$LOG_SYNC_PATH/.log_suppress_offsets"/*.offset 2>/dev/null
+                    echo_t "Cleared log suppression offsets after successful upload"
+                fi
                 rm -rf $UploadFile
 		if [ -f "$PRESERVE_LOG_PATH/$UploadFile" ] && [ "$UploadPath" != "$PRESERVE_LOG_PATH" ]; then #Remove from backup.
 		   rm -rf "$PRESERVE_LOG_PATH/$UploadFile"
@@ -824,6 +832,14 @@ HttpLogUpload()
                     echo_t "LOGS UPLOADED SUCCESSFULLY, RETURN CODE: $http_code"
 		    t2CountNotify "SYS_INFO_LOGS_UPLOADED"
                     result=0
+                    # Clear suppression offsets after successful upload so next cycle reprocesses fresh
+                    if [ -d "$LOG_SYNC_BACK_UP_PATH/.log_suppress_offsets" ]; then
+                        rm -f "$LOG_SYNC_BACK_UP_PATH/.log_suppress_offsets"/*.offset 2>/dev/null
+                        echo_t "Cleared log suppression offsets after successful upload"
+                    elif [ -d "$LOG_SYNC_PATH/.log_suppress_offsets" ]; then
+                        rm -f "$LOG_SYNC_PATH/.log_suppress_offsets"/*.offset 2>/dev/null
+                        echo_t "Cleared log suppression offsets after successful upload"
+                    fi
                     rm -rf $UploadFile
                     if [ -f "$PRESERVE_LOG_PATH/$UploadFile" ] && [ "$UploadPath" != "$PRESERVE_LOG_PATH" ]; then #Remove from backup.
                       rm -rf "$PRESERVE_LOG_PATH/$UploadFile"

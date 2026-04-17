@@ -422,11 +422,11 @@ syncLogs_nvram2()
     log_files_sync_to_nvram2 $option
 
     # Apply log suppression to reduce repeated log patterns before upload
-    # Use --fresh flag because sync copies fresh files each time, offsets must be reset
     # Size tracking (AFTER_SYNC, AFTER_SUPPRESS, REDUCTION) is handled inside log_suppress.sh
+    # Offsets are cleared after successful upload in uploadRDKBLogs.sh
     if [ -f "$RDK_LOGGER_PATH/log_suppress.sh" ]; then
         echo_t "Applying log suppression to synced logs in $LOG_SYNC_PATH"
-        sh $RDK_LOGGER_PATH/log_suppress.sh "$LOG_SYNC_PATH" --fresh
+        sh $RDK_LOGGER_PATH/log_suppress.sh "$LOG_SYNC_PATH"
     else
         echo_t "log_suppress.sh not found at $RDK_LOGGER_PATH/log_suppress.sh - skipping suppression"
         TIMESTAMP=`date '+%Y-%m-%d %H:%M:%S'`

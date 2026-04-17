@@ -29,6 +29,7 @@
 #   Each offset file contains the number of lines already processed.
 #   On subsequent runs, only new lines (beyond the offset) are suppressed
 #   and appended to the existing output file.
+#   Offsets are cleared by uploadRDKBLogs.sh after successful upload.
 ##########################################################################
 
 # Source echo_t function if available
@@ -41,15 +42,18 @@ else
     }
 fi
 
+# Enable/disable toggle: suppression is ON by default, skip only if disable file exists
+LOG_SUPPRESS_DISABLE="/nvram2/.log_suppression_disabled"
+if [ -f "$LOG_SUPPRESS_DISABLE" ]; then
+    echo_t "Log suppression disabled ($LOG_SUPPRESS_DISABLE found). Skipping."
+    exit 0
+fi
+
 LOG_SUPPRESS_INPUT_DIR="$1"
 LOG_SUPPRESS_OUTPUT_DIR="$2"
-LOG_SUPPRESS_FRESH="$3"
 
 # If output directory not provided, use input directory (in-place)
-if [ -z "$LOG_SUPPRESS_OUTPUT_DIR" ] || [ "$LOG_SUPPRESS_OUTPUT_DIR" = "--fresh" ]; then
-    if [ "$LOG_SUPPRESS_OUTPUT_DIR" = "--fresh" ]; then
-        LOG_SUPPRESS_FRESH="--fresh"
-    fi
+if [ -z "$LOG_SUPPRESS_OUTPUT_DIR" ]; then
     LOG_SUPPRESS_OUTPUT_DIR="$LOG_SUPPRESS_INPUT_DIR"
     LOG_SUPPRESS_IN_PLACE=1
 else
@@ -58,8 +62,7 @@ fi
 
 # Check if input directory is provided
 if [ -z "$LOG_SUPPRESS_INPUT_DIR" ]; then
-    echo_t "Usage: $0 <input_directory> [output_directory] [--fresh]"
-    echo_t "  --fresh : Clear all offset files and reprocess all logs from scratch"
+    echo_t "Usage: $0 <input_directory> [output_directory]"
     exit 1
 fi
 
@@ -74,12 +77,6 @@ mkdir -p "$LOG_SUPPRESS_OUTPUT_DIR"
 # Directory to store offset files (tracks how many lines were already processed per file)
 OFFSET_DIR="$LOG_SUPPRESS_OUTPUT_DIR/.log_suppress_offsets"
 mkdir -p "$OFFSET_DIR"
-
-# Clear offsets if --fresh flag is provided
-if [ "$LOG_SUPPRESS_FRESH" = "--fresh" ]; then
-    echo_t "Fresh mode: Clearing all offset files to reprocess logs from scratch"
-    rm -f "$OFFSET_DIR"/*.offset 2>/dev/null
-fi
 
 # ------------------------------------------------------------
 # get_offset <offset_file>
