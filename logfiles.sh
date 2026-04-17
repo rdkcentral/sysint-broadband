@@ -758,6 +758,12 @@ backupnvram2logs()
 
 	for fname in $FILES
 	do
+		# Skip truncating the log suppression stats files - they need to persist
+		case "$fname" in
+			log_suppress_stats.txt|log_suppress_cpu_overhead.txt)
+				continue
+				;;
+		esac
 		>$fname;
 	done
 
@@ -959,6 +965,13 @@ backupAllLogs()
 
 	for fname in $SOURCE_FILES
 	do
+		# Skip truncating the log suppression stats files - they need to persist
+		case "$fname" in
+			log_suppress_stats.txt|log_suppress_cpu_overhead.txt)
+				$operation $source$fname $dt
+				continue
+				;;
+		esac
 		$operation $source$fname $dt; >$source$fname;
 	done
 	cp /version.txt $dt
