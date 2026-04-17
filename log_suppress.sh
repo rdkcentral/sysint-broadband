@@ -541,7 +541,7 @@ END {
 
         # If not single line repetition, try multi-line patterns (2 lines up to N lines)
         if (!found) {
-            max_pattern_len = 10
+            max_pattern_len = 20
             if (idx - i < max_pattern_len) max_pattern_len = idx - i
 
             for (plen = 2; plen <= max_pattern_len && !found; plen++) {
