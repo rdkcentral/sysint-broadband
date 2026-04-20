@@ -525,13 +525,10 @@ END {
             }
 
             if (rep_count > 1) {
-                # Single line repetition - show inline suppression
-                ts_list = ""
-                for (r = 1; r < rep_count; r++) {
-                    if (ts_list != "") ts_list = ts_list ","
-                    ts_list = ts_list "<" timestamps[i + r] ">"
-                }
-                print lines[i] " [suppressed count: " (rep_count - 1) ", timestamps: " ts_list "]"
+                # Single line repetition - use range format (first + last timestamp only)
+                ts_first = timestamps[i + 1]
+                ts_last = timestamps[i + rep_count - 1]
+                print lines[i] " [suppressed count: " (rep_count - 1) ", timestamps: [" ts_first "] to [" ts_last "]]"
                 i += rep_count
                 found = 1
             }
