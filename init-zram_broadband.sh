@@ -42,13 +42,13 @@ fi
 
 # Load ZRAM module with one block device for SWAP
 if modinfo zram | grep -q ' zram_num_devices:' 2>/dev/null; then
-    MODPROBE_ARGS="zram_num_devices=${NRDEVICES}"
+    MODPROBE_ARGS="zram_num_devices=1"
 elif modinfo zram | grep -q ' num_devices:' 2>/dev/null; then
-    MODPROBE_ARGS="num_devices=${NRDEVICES}"
+    MODPROBE_ARGS="num_devices=1"
 else
     exit 1
 fi
-modprobe zram $MODPROBE_ARGS
+modprobe zram "$MODPROBE_ARGS"
 
 # Wait for the module to load
 sleep 3
@@ -56,8 +56,8 @@ sleep 3
 # Configure the disk size
 MEMSWAP_DISK_SIZE=$(dmcli eRT retv Device.DeviceInfo.X_RDKCENTRAL-COM_RFC.Feature.MEMSWAP.DiskSize)
 if [ -z "$MEMSWAP_DISK_SIZE" ]; then
-    echo_t "MEMSWAP disk size not retrieved from RFC"
-    exit 1
+    echo_t "MEMSWAP disk size not retrieved from RFC, setting to default of 300MB"
+    MEMSWAP_DISK_SIZE=300
 fi
 echo "${MEMSWAP_DISK_SIZE}M" >/sys/block/zram0/disksize
 echo_t "MEMSWAP disk size set to ${MEMSWAP_DISK_SIZE}M"
@@ -65,29 +65,29 @@ echo_t "MEMSWAP disk size set to ${MEMSWAP_DISK_SIZE}M"
 # Configure the system swappiness
 MEMSWAP_TUNABLES_SWAPPINESS=$(dmcli eRT retv Device.DeviceInfo.X_RDKCENTRAL-COM_RFC.Feature.MEMSWAP.Tunables.Swappiness)
 if [ -z "$MEMSWAP_TUNABLES_SWAPPINESS" ]; then
-    echo_t "MEMSWAP swappiness not retrieved from RFC"
-    exit 1
+    echo_t "MEMSWAP swappiness not retrieved from RFC, keeping system default"
+else
+    sysctl -w vm.swappiness="$MEMSWAP_TUNABLES_SWAPPINESS"
+    echo_t "System swappiness set to ${MEMSWAP_TUNABLES_SWAPPINESS}"
 fi
-sysctl -w vm.swappiness="$MEMSWAP_TUNABLES_SWAPPINESS"
-echo_t "System swappiness set to ${MEMSWAP_TUNABLES_SWAPPINESS}"
 
 # Configure the system watermark scale factor
 MEMSWAP_TUNABLES_WATERMARK_SCALE_FACTOR=$(dmcli eRT retv Device.DeviceInfo.X_RDKCENTRAL-COM_RFC.Feature.MEMSWAP.Tunables.WatermarkScaleFactor)
 if [ -z "$MEMSWAP_TUNABLES_WATERMARK_SCALE_FACTOR" ]; then
-    echo_t "MEMSWAP watermark scale factor not retrieved from RFC"
-    exit 1
+    echo_t "MEMSWAP watermark scale factor not retrieved from RFC, keeping system default"
+else
+    sysctl -w vm.watermark_scale_factor="$MEMSWAP_TUNABLES_WATERMARK_SCALE_FACTOR"
+    echo_t "System watermark scale factor set to ${MEMSWAP_TUNABLES_WATERMARK_SCALE_FACTOR}"
 fi
-sysctl -w vm.watermark_scale_factor="$MEMSWAP_TUNABLES_WATERMARK_SCALE_FACTOR"
-echo_t "System watermark scale factor set to ${MEMSWAP_TUNABLES_WATERMARK_SCALE_FACTOR}"
 
 # Configure the system page cluster for SWAP
 MEMSWAP_TUNABLES_PAGE_CLUSTER=$(dmcli eRT retv Device.DeviceInfo.X_RDKCENTRAL-COM_RFC.Feature.MEMSWAP.Tunables.PageCluster)
 if [ -z "$MEMSWAP_TUNABLES_PAGE_CLUSTER" ]; then
-    echo_t "MEMSWAP page cluster not retrieved from RFC"
-    exit 1
+    echo_t "MEMSWAP page cluster not retrieved from RFC, keeping system default"
+else
+    sysctl -w vm.page-cluster="$MEMSWAP_TUNABLES_PAGE_CLUSTER"
+    echo_t "System page cluster for SWAP set to ${MEMSWAP_TUNABLES_PAGE_CLUSTER}"
 fi
-sysctl -w vm.page-cluster="$MEMSWAP_TUNABLES_PAGE_CLUSTER"
-echo_t "System page cluster for SWAP set to ${MEMSWAP_TUNABLES_PAGE_CLUSTER}"
 
 # Enable the ZRAM SWAP device
 mkswap /dev/zram0
