@@ -48,6 +48,7 @@ else
      if [ "x$BOX_TYPE" == "xTCCBR" ]; then
          sleep 300
      fi
+    sleep 300
     echo "RFC MGR is called here ... : $(date)"
     /usr/bin/rfcMgr &
     echo "RFC MGR execution finished here ... : $(date)"
