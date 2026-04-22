@@ -20,32 +20,28 @@
 #
 LOG=/rdklogs/logs/rfc_trace.log
 
-{
-echo "========== RFC SERVICE INVOKED =========="
-date
+log() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S.%3N') | $*" >> "$LOG"
+}
 
-echo "--- SELF ---"
-echo "PID=$$ PPID=$PPID"
-echo "CMD=$(tr '\0' ' ' < /proc/$$/cmdline)"
+log "UPTIME=$(cut -d' ' -f1 /proc/uptime)"
+log "========== RFC SERVICE INVOKED =========="
 
-echo "--- PARENT ---"
-echo "CMD=$(tr '\0' ' ' < /proc/$PPID/cmdline 2>/dev/null)"
-echo "COMM=$(cat /proc/$PPID/comm 2>/dev/null)"
+log "PID=$$ PPID=$PPID"
+log "SELF CMD=$(tr '\0' ' ' < /proc/$$/cmdline)"
 
-echo "--- PROCESS TREE (UPWARDS) ---"
+log "PARENT CMD=$(tr '\0' ' ' < /proc/$PPID/cmdline 2>/dev/null)"
+log "PARENT COMM=$(cat /proc/$PPID/comm 2>/dev/null)"
+
+log "---- PROCESS TREE ----"
 pid=$$
 while [ "$pid" -gt 1 ]; do
     cmd=$(tr '\0' ' ' < /proc/$pid/cmdline 2>/dev/null)
-    echo "PID=$pid CMD=$cmd"
+    log "PID=$pid CMD=$cmd"
     pid=$(awk '{print $4}' /proc/$pid/stat 2>/dev/null)
 done
 
-echo "--- ENV (filtered) ---"
-env | grep -E "SERVICE|RFC|SYSTEMD" 
-
-echo "========================================="
-echo
-} >> $LOG 2>&1
+log "========================================="
 
 echo "RFC service START ing here ...: $(date)"
 . /etc/include.properties
