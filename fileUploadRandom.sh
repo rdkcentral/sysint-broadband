@@ -253,7 +253,7 @@ calcRandTimeandUpload()
     # Enable RFC feature
     if [ -f  $DCM_PATH/rfc.service ]; then
        echo_t "RDK Logger : Starting RFC service from fileUploadRandom.sh"
-       #sh $DCM_PATH/rfc.service &
+       sh $DCM_PATH/rfc.service &
     else
        echo_t "RDK Logger : No RFC service file" 
     fi
