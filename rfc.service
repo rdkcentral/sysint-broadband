@@ -18,6 +18,35 @@
 # limitations under the License.
 ##########################################################################
 #
+LOG=/rdklogs/logs/rfc_trace.log
+
+{
+echo "========== RFC SERVICE INVOKED =========="
+date
+
+echo "--- SELF ---"
+echo "PID=$$ PPID=$PPID"
+echo "CMD=$(tr '\0' ' ' < /proc/$$/cmdline)"
+
+echo "--- PARENT ---"
+echo "CMD=$(tr '\0' ' ' < /proc/$PPID/cmdline 2>/dev/null)"
+echo "COMM=$(cat /proc/$PPID/comm 2>/dev/null)"
+
+echo "--- PROCESS TREE (UPWARDS) ---"
+pid=$$
+while [ "$pid" -gt 1 ]; do
+    cmd=$(tr '\0' ' ' < /proc/$pid/cmdline 2>/dev/null)
+    echo "PID=$pid CMD=$cmd"
+    pid=$(awk '{print $4}' /proc/$pid/stat 2>/dev/null)
+done
+
+echo "--- ENV (filtered) ---"
+env | grep -E "SERVICE|RFC|SYSTEMD" 
+
+echo "========================================="
+echo
+} >> $LOG 2>&1
+
 echo "RFC service START ing here ...: $(date)"
 . /etc/include.properties
 . /etc/device.properties
