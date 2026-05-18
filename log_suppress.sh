@@ -106,7 +106,7 @@ set_offset()
 }
 
 # ------------------------------------------------------------
-# CPU Overhead Monitoring Functions (using top command)
+# Per-Process CPU Overhead Monitoring Functions
 # ------------------------------------------------------------
 
 # Log file for CPU overhead reports
@@ -144,91 +144,6 @@ log_size_tracking()
     echo_t "SIZE_TRACK [${stage}]: ${dir} = ${size_kb} KB"
 }
 
-# Capture CPU snapshot using top command
-capture_top_snapshot()
-{
-    local label="$1"
-    local output_file="/tmp/log_suppress_top_${label}.txt"
-    local raw_file="/tmp/log_suppress_top_raw_${label}.txt"
-    
-    # Run top in batch mode - capture full output to temp file to avoid broken pipe
-    # BusyBox top: use -b for batch, -n 2 for 2 iterations, -d 1 for 1 sec delay
-    top -b -n 2 -d 1 > "$raw_file" 2>/dev/null
-    
-    # Get the last CPU line (from 2nd iteration for real-time stats)
-    # BusyBox format: "CPU:   3% usr   6% sys   0% nic  89% idle..."
-    grep -E "^(CPU:|%Cpu)" "$raw_file" 2>/dev/null | tail -1 > "$output_file"
-    
-    local cpu_line=`cat "$output_file" 2>/dev/null`
-    
-    local usr_cpu=0
-    local sys_cpu=0
-    local idle_cpu=0
-    
-    if echo "$cpu_line" | grep -q "CPU:"; then
-        # Busybox format: "CPU:   3% usr   6% sys   0% nic  89% idle..."
-        usr_cpu=`echo "$cpu_line" | awk '{for(i=1;i<=NF;i++) if($i=="usr") print $(i-1)}' | tr -d '%'`
-        sys_cpu=`echo "$cpu_line" | awk '{for(i=1;i<=NF;i++) if($i=="sys") print $(i-1)}' | tr -d '%'`
-        idle_cpu=`echo "$cpu_line" | awk '{for(i=1;i<=NF;i++) if($i=="idle") print $(i-1)}' | tr -d '%'`
-    elif echo "$cpu_line" | grep -q "%Cpu"; then
-        # Standard top format: "%Cpu(s):  3.0 us,  6.0 sy,  0.0 ni, 89.0 id..."
-        usr_cpu=`echo "$cpu_line" | awk -F',' '{print $1}' | awk '{print $NF}' | cut -d'.' -f1`
-        sys_cpu=`echo "$cpu_line" | awk -F',' '{print $2}' | awk '{print $NF}' | cut -d'.' -f1`
-        idle_cpu=`echo "$cpu_line" | awk -F',' '{print $4}' | awk '{print $NF}' | cut -d'.' -f1`
-    fi
-    
-    # Handle empty/invalid values (ensure numeric)
-    [ -z "$usr_cpu" ] && usr_cpu=0
-    [ -z "$sys_cpu" ] && sys_cpu=0
-    [ -z "$idle_cpu" ] && idle_cpu=0
-    
-    # Validate numeric
-    echo "$usr_cpu" | grep -qE '^[0-9]+$' || usr_cpu=0
-    echo "$sys_cpu" | grep -qE '^[0-9]+$' || sys_cpu=0
-    echo "$idle_cpu" | grep -qE '^[0-9]+$' || idle_cpu=0
-    
-    local total_cpu=$((usr_cpu + sys_cpu))
-    
-    # Parse load average from /proc/loadavg (more reliable than parsing top output)
-    local load_avg="N/A"
-    if [ -r /proc/loadavg ]; then
-        load_avg=`cat /proc/loadavg 2>/dev/null | awk '{print $1, $2, $3}'`
-    fi
-    [ -z "$load_avg" ] && load_avg="N/A"
-    
-    # Get memory info from /proc/meminfo
-    local mem_pct=0
-    if [ -r /proc/meminfo ]; then
-        local mem_total=`grep MemTotal /proc/meminfo 2>/dev/null | awk '{print $2}'`
-        local mem_free=`grep MemFree /proc/meminfo 2>/dev/null | awk '{print $2}'`
-        local mem_buffers=`grep Buffers /proc/meminfo 2>/dev/null | awk '{print $2}'`
-        local mem_cached=`grep "^Cached:" /proc/meminfo 2>/dev/null | awk '{print $2}'`
-        # Ensure numeric values
-        mem_total=${mem_total:-0}
-        mem_free=${mem_free:-0}
-        mem_buffers=${mem_buffers:-0}
-        mem_cached=${mem_cached:-0}
-        if [ "$mem_total" -gt 0 ] 2>/dev/null; then
-            local mem_used=$((mem_total - mem_free - mem_buffers - mem_cached))
-            mem_pct=$((mem_used * 100 / mem_total))
-        fi
-    fi
-    
-    # Clean up raw file
-    rm -f "$raw_file"
-    
-    log_cpu_overhead "[$label] CPU: ${total_cpu}% (usr:${usr_cpu}% sys:${sys_cpu}%) | Idle: ${idle_cpu}% | Load: $load_avg | Mem: ${mem_pct}%"
-    
-    # Store values in temp files for later comparison (more portable than eval)
-    local state_file="/tmp/log_suppress_state_${label}.txt"
-    echo "USR=$usr_cpu" > "$state_file"
-    echo "SYS=$sys_cpu" >> "$state_file"
-    echo "IDLE=$idle_cpu" >> "$state_file"
-    echo "TOTAL=$total_cpu" >> "$state_file"
-    echo "LOAD=$load_avg" >> "$state_file"
-    echo "MEM=$mem_pct" >> "$state_file"
-}
-
 # Get process CPU time from /proc/self/stat (utime + stime in jiffies)
 get_proc_cpu_time()
 {
@@ -239,150 +154,154 @@ get_proc_cpu_time()
     fi
 }
 
-# Initialize CPU monitoring
+# Get CPU usage for a specific process by PID using ps
+# Returns: cpu_percent
+get_process_cpu_usage()
+{
+    local pid="$1"
+    local cpu_pct=0
+    
+    if [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
+        # Use ps to get CPU percentage for the specific process
+        cpu_pct=$(ps -p "$pid" -o %cpu= 2>/dev/null | tr -d ' ' | cut -d'.' -f1)
+        [ -z "$cpu_pct" ] && cpu_pct=0
+        echo "$cpu_pct" | grep -qE '^[0-9]+$' || cpu_pct=0
+    fi
+    
+    echo "$cpu_pct"
+}
+
+# Get memory usage for a specific process by PID using ps
+# Returns: mem_percent
+get_process_mem_usage()
+{
+    local pid="$1"
+    local mem_pct=0
+    
+    if [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
+        # Use ps to get memory percentage for the specific process
+        mem_pct=$(ps -p "$pid" -o %mem= 2>/dev/null | tr -d ' ' | cut -d'.' -f1)
+        [ -z "$mem_pct" ] && mem_pct=0
+        echo "$mem_pct" | grep -qE '^[0-9]+$' || mem_pct=0
+    fi
+    
+    echo "$mem_pct"
+}
+
+# Get process command name by PID
+get_process_cmd()
+{
+    local pid="$1"
+    local cmd=""
+    
+    if [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
+        cmd=$(ps -p "$pid" -o comm= 2>/dev/null)
+        [ -z "$cmd" ] && cmd="unknown"
+    fi
+    
+    echo "$cmd"
+}
+
+# Initialize per-process CPU monitoring
 init_cpu_monitor()
 {
     log_cpu_overhead ""
     log_cpu_overhead "╔════════════════════════════════════════════════════════════╗"
-    log_cpu_overhead "║  CAPTURING SYSTEM STATE BEFORE LOG SUPPRESSION             ║"
+    log_cpu_overhead "║  PER-PROCESS CPU MONITORING STARTED                        ║"
     log_cpu_overhead "╚════════════════════════════════════════════════════════════╝"
-    capture_top_snapshot "BEFORE"
     
-    CPU_MON_START_SEC=`date +%s`
-    CPU_MON_START_PROC=`get_proc_cpu_time`
-    CPU_MON_PEAK_TOTAL=0
+    CPU_MON_START_SEC=$(date +%s)
+    CPU_MON_START_PROC=$(get_proc_cpu_time)
+    CPU_MON_PID=$$
     CPU_MON_SAMPLES=0
     CPU_MON_SUM=0
+    CPU_MON_PEAK=0
+    CPU_MON_MEM_PEAK=0
+    
+    # Initial snapshot
+    local init_cpu=$(get_process_cpu_usage $CPU_MON_PID)
+    local init_mem=$(get_process_mem_usage $CPU_MON_PID)
+    log_cpu_overhead "[INIT] PID: $CPU_MON_PID | Initial CPU: ${init_cpu}% | Initial Mem: ${init_mem}%"
 }
 
-# Sample CPU using top during execution
+# Sample per-process CPU during execution
 sample_cpu()
 {
-    # Quick CPU check using /proc/stat (faster than top)
-    if [ -r /proc/stat ]; then
-        # BusyBox compatible: use head -1 instead of head -n 1
-        local cpu_line=`head -1 /proc/stat 2>/dev/null`
-        local user=`echo "$cpu_line" | awk '{print $2}'`
-        local nice=`echo "$cpu_line" | awk '{print $3}'`
-        local system=`echo "$cpu_line" | awk '{print $4}'`
-        local idle=`echo "$cpu_line" | awk '{print $5}'`
-        local total=$((user + nice + system + idle))
-        local active=$((user + nice + system))
-        
-        if [ "$total" -gt 0 ]; then
-            local cpu_pct=$((active * 100 / total))
-            # This is cumulative, so we track the instantaneous reading differently
-            CPU_MON_SUM=$((CPU_MON_SUM + cpu_pct))
-            CPU_MON_SAMPLES=$((CPU_MON_SAMPLES + 1))
-            [ "$cpu_pct" -gt "$CPU_MON_PEAK_TOTAL" ] && CPU_MON_PEAK_TOTAL=$cpu_pct
-        fi
-    fi
+    local cpu_pct=$(get_process_cpu_usage $CPU_MON_PID)
+    local mem_pct=$(get_process_mem_usage $CPU_MON_PID)
+    
+    CPU_MON_SUM=$((CPU_MON_SUM + cpu_pct))
+    CPU_MON_SAMPLES=$((CPU_MON_SAMPLES + 1))
+    [ "$cpu_pct" -gt "$CPU_MON_PEAK" ] && CPU_MON_PEAK=$cpu_pct
+    [ "$mem_pct" -gt "$CPU_MON_MEM_PEAK" ] && CPU_MON_MEM_PEAK=$mem_pct
 }
 
-# Report CPU overhead statistics
+# Report per-process CPU overhead statistics
 report_cpu_overhead()
 {
-    local end_sec=`date +%s`
-    local end_proc=`get_proc_cpu_time`
+    local end_sec=$(date +%s)
+    local end_proc=$(get_proc_cpu_time)
     
-    # Elapsed time
+    # Elapsed wall-clock time
     local elapsed=$((end_sec - CPU_MON_START_SEC))
+    [ "$elapsed" -eq 0 ] && elapsed=1
     
     # Process-specific CPU time (jiffies to ms, assuming 100Hz)
     local proc_jiffies=$((end_proc - CPU_MON_START_PROC))
     local proc_ms=$((proc_jiffies * 10))
     
-    log_cpu_overhead ""
-    log_cpu_overhead "╔════════════════════════════════════════════════════════════╗"
-    log_cpu_overhead "║  CAPTURING SYSTEM STATE AFTER LOG SUPPRESSION              ║"
-    log_cpu_overhead "╚════════════════════════════════════════════════════════════╝"
-    capture_top_snapshot "AFTER"
-    
-    # Read state values from temp files
-    local STATE_BEFORE_USR=0 STATE_BEFORE_SYS=0 STATE_BEFORE_IDLE=0 STATE_BEFORE_TOTAL=0 STATE_BEFORE_LOAD="N/A" STATE_BEFORE_MEM=0
-    local STATE_AFTER_USR=0 STATE_AFTER_SYS=0 STATE_AFTER_IDLE=0 STATE_AFTER_TOTAL=0 STATE_AFTER_LOAD="N/A" STATE_AFTER_MEM=0
-    
-    if [ -f /tmp/log_suppress_state_BEFORE.txt ]; then
-        STATE_BEFORE_USR=`grep "^USR=" /tmp/log_suppress_state_BEFORE.txt 2>/dev/null | cut -d'=' -f2`
-        STATE_BEFORE_SYS=`grep "^SYS=" /tmp/log_suppress_state_BEFORE.txt 2>/dev/null | cut -d'=' -f2`
-        STATE_BEFORE_IDLE=`grep "^IDLE=" /tmp/log_suppress_state_BEFORE.txt 2>/dev/null | cut -d'=' -f2`
-        STATE_BEFORE_TOTAL=`grep "^TOTAL=" /tmp/log_suppress_state_BEFORE.txt 2>/dev/null | cut -d'=' -f2`
-        STATE_BEFORE_LOAD=`grep "^LOAD=" /tmp/log_suppress_state_BEFORE.txt 2>/dev/null | cut -d'=' -f2-`
-        STATE_BEFORE_MEM=`grep "^MEM=" /tmp/log_suppress_state_BEFORE.txt 2>/dev/null | cut -d'=' -f2`
+    # Calculate CPU overhead percentage (process CPU time / wall clock time)
+    local cpu_overhead_pct=0
+    if [ "$elapsed" -gt 0 ]; then
+        # proc_ms is in milliseconds, elapsed is in seconds
+        cpu_overhead_pct=$((proc_ms / (elapsed * 10)))
     fi
     
-    if [ -f /tmp/log_suppress_state_AFTER.txt ]; then
-        STATE_AFTER_USR=`grep "^USR=" /tmp/log_suppress_state_AFTER.txt 2>/dev/null | cut -d'=' -f2`
-        STATE_AFTER_SYS=`grep "^SYS=" /tmp/log_suppress_state_AFTER.txt 2>/dev/null | cut -d'=' -f2`
-        STATE_AFTER_IDLE=`grep "^IDLE=" /tmp/log_suppress_state_AFTER.txt 2>/dev/null | cut -d'=' -f2`
-        STATE_AFTER_TOTAL=`grep "^TOTAL=" /tmp/log_suppress_state_AFTER.txt 2>/dev/null | cut -d'=' -f2`
-        STATE_AFTER_LOAD=`grep "^LOAD=" /tmp/log_suppress_state_AFTER.txt 2>/dev/null | cut -d'=' -f2-`
-        STATE_AFTER_MEM=`grep "^MEM=" /tmp/log_suppress_state_AFTER.txt 2>/dev/null | cut -d'=' -f2`
+    # Average CPU from samples
+    local avg_cpu=0
+    if [ "$CPU_MON_SAMPLES" -gt 0 ]; then
+        avg_cpu=$((CPU_MON_SUM / CPU_MON_SAMPLES))
     fi
     
-    # Ensure numeric defaults
-    [ -z "$STATE_BEFORE_USR" ] && STATE_BEFORE_USR=0
-    [ -z "$STATE_BEFORE_SYS" ] && STATE_BEFORE_SYS=0
-    [ -z "$STATE_BEFORE_IDLE" ] && STATE_BEFORE_IDLE=0
-    [ -z "$STATE_BEFORE_TOTAL" ] && STATE_BEFORE_TOTAL=0
-    [ -z "$STATE_BEFORE_MEM" ] && STATE_BEFORE_MEM=0
-    [ -z "$STATE_AFTER_USR" ] && STATE_AFTER_USR=0
-    [ -z "$STATE_AFTER_SYS" ] && STATE_AFTER_SYS=0
-    [ -z "$STATE_AFTER_IDLE" ] && STATE_AFTER_IDLE=0
-    [ -z "$STATE_AFTER_TOTAL" ] && STATE_AFTER_TOTAL=0
-    [ -z "$STATE_AFTER_MEM" ] && STATE_AFTER_MEM=0
-    [ -z "$STATE_BEFORE_LOAD" ] && STATE_BEFORE_LOAD="N/A"
-    [ -z "$STATE_AFTER_LOAD" ] && STATE_AFTER_LOAD="N/A"
-    
-    # Calculate CPU spike
-    local cpu_spike=$((STATE_AFTER_TOTAL - STATE_BEFORE_TOTAL))
-    [ "$cpu_spike" -lt 0 ] 2>/dev/null && cpu_spike=0
-    
-    local idle_drop=$((STATE_BEFORE_IDLE - STATE_AFTER_IDLE))
-    [ "$idle_drop" -lt 0 ] 2>/dev/null && idle_drop=0
+    # Final snapshot
+    local final_cpu=$(get_process_cpu_usage $CPU_MON_PID)
+    local final_mem=$(get_process_mem_usage $CPU_MON_PID)
     
     log_cpu_overhead ""
     log_cpu_overhead "╔════════════════════════════════════════════════════════════════════╗"
-    log_cpu_overhead "║           LOG SUPPRESSION CPU OVERHEAD REPORT (via top)            ║"
+    log_cpu_overhead "║       LOG SUPPRESSION PER-PROCESS CPU OVERHEAD REPORT              ║"
     log_cpu_overhead "╠════════════════════════════════════════════════════════════════════╣"
-    log_cpu_overhead "║  Duration: ${elapsed} seconds                                             "
+    log_cpu_overhead "║  PROCESS IDENTIFICATION:                                           "
+    log_cpu_overhead "║    PID: $CPU_MON_PID                                               "
+    log_cpu_overhead "║    Command: $(get_process_cmd $CPU_MON_PID)                        "
     log_cpu_overhead "╠════════════════════════════════════════════════════════════════════╣"
-    log_cpu_overhead "║  CPU USAGE COMPARISON:                                             "
-    log_cpu_overhead "║  ┌─────────────┬──────────┬──────────┬──────────┬─────────┐        "
-    log_cpu_overhead "║  │   State     │  User %  │  Sys %   │  Total % │  Idle % │        "
-    log_cpu_overhead "║  ├─────────────┼──────────┼──────────┼──────────┼─────────┤        "
-    log_cpu_overhead "║  │  BEFORE     │    ${STATE_BEFORE_USR}%    │    ${STATE_BEFORE_SYS}%    │    ${STATE_BEFORE_TOTAL}%    │   ${STATE_BEFORE_IDLE}%   │        "
-    log_cpu_overhead "║  │  AFTER      │    ${STATE_AFTER_USR}%    │    ${STATE_AFTER_SYS}%    │    ${STATE_AFTER_TOTAL}%    │   ${STATE_AFTER_IDLE}%   │        "
-    log_cpu_overhead "║  └─────────────┴──────────┴──────────┴──────────┴─────────┘        "
-    log_cpu_overhead "║                                                                    "
-    log_cpu_overhead "║  CPU SPIKE: +${cpu_spike}%  |  IDLE DROP: -${idle_drop}%                       "
+    log_cpu_overhead "║  TIMING:                                                           "
+    log_cpu_overhead "║    Duration: ${elapsed} seconds                                    "
+    log_cpu_overhead "║    Process CPU time: ${proc_ms} ms                                 "
     log_cpu_overhead "╠════════════════════════════════════════════════════════════════════╣"
-    log_cpu_overhead "║  LOAD AVERAGE:                                                     "
-    log_cpu_overhead "║    BEFORE: ${STATE_BEFORE_LOAD}                                    "
-    log_cpu_overhead "║    AFTER:  ${STATE_AFTER_LOAD}                                     "
+    log_cpu_overhead "║  PER-PROCESS CPU USAGE:                                            "
+    log_cpu_overhead "║    CPU Overhead: ${cpu_overhead_pct}%                              "
+    log_cpu_overhead "║    Peak CPU: ${CPU_MON_PEAK}%                                      "
+    log_cpu_overhead "║    Average CPU (sampled): ${avg_cpu}%                              "
+    log_cpu_overhead "║    Final CPU: ${final_cpu}%                                        "
+    log_cpu_overhead "║    Samples collected: ${CPU_MON_SAMPLES}                           "
     log_cpu_overhead "╠════════════════════════════════════════════════════════════════════╣"
-    log_cpu_overhead "║  MEMORY USAGE:                                                     "
-    log_cpu_overhead "║    BEFORE: ${STATE_BEFORE_MEM}%  |  AFTER: ${STATE_AFTER_MEM}%                 "
-    log_cpu_overhead "╠════════════════════════════════════════════════════════════════════╣"
-    log_cpu_overhead "║  PROCESS STATS:                                                    "
-    log_cpu_overhead "║    Script CPU time: ${proc_ms} ms                                  "
+    log_cpu_overhead "║  PER-PROCESS MEMORY USAGE:                                         "
+    log_cpu_overhead "║    Peak Memory: ${CPU_MON_MEM_PEAK}%                               "
+    log_cpu_overhead "║    Final Memory: ${final_mem}%                                     "
     log_cpu_overhead "╠════════════════════════════════════════════════════════════════════╣"
     
-    # Spike assessment based on top readings
-    if [ "$cpu_spike" -gt 30 ] || [ "$idle_drop" -gt 30 ]; then
-        log_cpu_overhead "║  ⚠ WARNING: Significant CPU spike detected!                       "
+    # Overhead assessment based on per-process readings
+    if [ "$cpu_overhead_pct" -gt 30 ] || [ "$CPU_MON_PEAK" -gt 50 ]; then
+        log_cpu_overhead "║  ⚠ WARNING: Significant process CPU overhead detected!            "
         log_cpu_overhead "║    Recommendation: Consider running with 'nice -n 19'             "
-    elif [ "$cpu_spike" -gt 15 ] || [ "$idle_drop" -gt 15 ]; then
-        log_cpu_overhead "║  ⚡ MODERATE: Some CPU overhead observed                           "
+    elif [ "$cpu_overhead_pct" -gt 15 ] || [ "$CPU_MON_PEAK" -gt 25 ]; then
+        log_cpu_overhead "║  ⚡ MODERATE: Some process CPU overhead observed                   "
     else
-        log_cpu_overhead "║  ✓ LOW: Minimal CPU impact, no significant spike                   "
+        log_cpu_overhead "║  ✓ LOW: Minimal process CPU impact                                 "
     fi
     log_cpu_overhead "╚════════════════════════════════════════════════════════════════════╝"
     log_cpu_overhead "Logs saved to: $CPU_OVERHEAD_LOG"
-    
-    # Cleanup temp files
-    rm -f /tmp/log_suppress_top_BEFORE.txt /tmp/log_suppress_top_AFTER.txt
-    rm -f /tmp/log_suppress_state_BEFORE.txt /tmp/log_suppress_state_AFTER.txt
 }
 
 # Function to suppress logs in a single file (or a stream of new lines)
