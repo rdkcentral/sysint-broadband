@@ -65,7 +65,6 @@ partnerId="$(getPartnerId)"
 unscheduledDisable=`syscfg get UploadLogsOnUnscheduledRebootDisable`
 UPLOAD_LOGS=`sysevent get UPLOAD_LOGS_VAL_DCM`
 
-UseLANIFIPV6=`sysevent get LANIPv6GUASupport`
 
 if [ "$UPLOAD_LOGS" = "" ] || [ ! -f "$DCM_SETTINGS_PARSED" ]
 then
@@ -250,19 +249,10 @@ retryUpload()
 	   sleep 10
        WAN_INTERFACE=$(getWanInterfaceName)
 	   WAN_STATE=`sysevent get wan-status`
-if [ "x$BOX_TYPE" = "xHUB4" ] || [ "x$BOX_TYPE" = "xSR300" ] || [ "x$BOX_TYPE" = "xSR213" ] || [ "x$BOX_TYPE" = "xSE501" ] || [ "x$BOX_TYPE" = "xWNXL11BWL" ] || [ "$UseLANIFIPV6" = "true" ]; then
-   CURRENT_WAN_IPV6_STATUS=`sysevent get ipv6_connection_state`
-   if [ "xup" = "x$CURRENT_WAN_IPV6_STATUS" ] ; then
-           EROUTER_IP=`ifconfig $HUB4_IPV6_INTERFACE | grep Global |  awk '/inet6/{print $3}' | cut -d '/' -f1 | head -n1`
-   else
-           EROUTER_IP=`ifconfig $WAN_INTERFACE | grep "inet addr" | cut -d":" -f2 | cut -d" " -f1`
-   fi
-else
-    EROUTER_IP=`ifconfig $WAN_INTERFACE | grep inet6 | grep -i 'Global'`
-    if [ "$EROUTER_IP" = "" ]; then
-       EROUTER_IP=`ifconfig $WAN_INTERFACE | grep "inet addr" | cut -d":" -f2 | cut -d" " -f1`
-    fi
-fi
+       EROUTER_IP=`ifconfig $WAN_INTERFACE | grep inet6 | grep -i 'Global'`
+       if [ "$EROUTER_IP" = "" ]; then
+         EROUTER_IP=`ifconfig $WAN_INTERFACE | grep "inet addr" | cut -d":" -f2 | cut -d" " -f1`
+       fi
        SYSEVENT_PID=`pidof syseventd`
 	   if [ -f $WAITINGFORUPLOAD ]
 	   then
@@ -475,16 +465,8 @@ HttpLogUpload()
     # If interface doesnt have ipv6 address then we will force the curl to go with ipv4.
     # Otherwise we will not specify the ip address family in curl options
     addr_type=""
-    if [ "x$BOX_TYPE" = "xHUB4" ] || [ "x$BOX_TYPE" = "xSR300" ] || [ "x$BOX_TYPE" = "xSR213" ] || [ "x$BOX_TYPE" = "xSE501" ] || [ "x$BOX_TYPE" = "xWNXL11BWL" ] || [ "$UseLANIFIPV6" = "true" ]; then
-    CURRENT_WAN_IPV6_STATUS=`sysevent get ipv6_connection_state`
-       if [ "xup" = "x$CURRENT_WAN_IPV6_STATUS" ] ; then
-          [ "x`ifconfig $HUB4_IPV6_INTERFACE | grep Global |  awk '/inet6/{print $3}' | cut -d '/' -f1 | head -n1`" != "x" ] || addr_type="-4"
-       else
-          [ "x`ifconfig $WAN_INTERFACE | grep inet6 | grep -i 'Global'`" != "x" ] || addr_type="-4"
-       fi
-    else
-       [ "x`ifconfig $WAN_INTERFACE | grep inet6 | grep -i 'Global'`" != "x" ] || addr_type="-4"
-    fi
+    [ "x`ifconfig $WAN_INTERFACE | grep inet6 | grep -i 'Global'`" != "x" ] || addr_type="-4"
+
     # Upload logs to "LOG_BACK_UP_REBOOT" upon reboot else to the default path "LOG_BACK_UP_PATH"	
 	if [ "$UploadOnReboot" == "true" ]; then
 		if [ "$nvram2Backup" == "true" ]; then
@@ -876,19 +858,11 @@ touch $REGULAR_UPLOAD
 if [ "$UploadProtocol" = "HTTP" ]
 then
    WAN_STATE=`sysevent get wan-status`
-if [ "x$BOX_TYPE" = "xHUB4" ] || [ "x$BOX_TYPE" = "xSR300" ] || [ "x$BOX_TYPE" = "xSR213" ] || [ "x$BOX_TYPE" = "xSE501" ] || [ "x$BOX_TYPE" = "xWNXL11BWL" ] || [ "$UseLANIFIPV6" = "true" ]; then
-   CURRENT_WAN_IPV6_STATUS=`sysevent get ipv6_connection_state`
-   if [ "xup" = "x$CURRENT_WAN_IPV6_STATUS" ] ; then
-           EROUTER_IP=`ifconfig $HUB4_IPV6_INTERFACE | grep Global |  awk '/inet6/{print $3}' | cut -d '/' -f1 | head -n1`
-   else
-           EROUTER_IP=`ifconfig $WAN_INTERFACE | grep "inet addr" | cut -d":" -f2 | cut -d" " -f1`
+
+   EROUTER_IP=`ifconfig $WAN_INTERFACE | grep inet6 | grep -i 'Global'`
+   if [ "$EROUTER_IP" = "" ]; then
+       EROUTER_IP=`ifconfig $WAN_INTERFACE | grep "inet addr" | cut -d":" -f2 | cut -d" " -f1`
    fi
-else
-  EROUTER_IP=`ifconfig $WAN_INTERFACE | grep inet6 | grep -i 'Global'`
-  if [ "$EROUTER_IP" = "" ]; then
-   EROUTER_IP=`ifconfig $WAN_INTERFACE | grep "inet addr" | cut -d":" -f2 | cut -d" " -f1`
-  fi
-fi
    SYSEVENT_PID=`pidof syseventd`
    if [ "$WAN_STATE" == "started" ] && [ "$EROUTER_IP" != "" ]
    then
