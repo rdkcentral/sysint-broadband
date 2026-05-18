@@ -584,37 +584,122 @@ END {
 }
 
 # ------------------------------------------------------------
-# suppress_log_file_incremental <input_file> <output_file> <offset_file>
+# suppress_log_file_incremental <input_file> <output_file> <offset_file> <in_place>
 #
 #   Core incremental logic:
-#     1. Read previously saved offset (lines already processed).
-#     2. Count current total lines in input file.
-#     3. If no new lines, skip the file entirely.
-#     4. Extract only the NEW lines (tail from offset+1 onward) into a
-#        temporary slice file.
-#     5. Run suppression on that slice and APPEND the result to output.
-#     6. Update the offset to the new total line count.
+#     For SEPARATE OUTPUT mode (in_place=0):
+#       1. Read previously saved offset (lines already processed from input).
+#       2. Extract only the NEW lines from input (tail from offset+1).
+#       3. Suppress and APPEND to output file.
+#       4. Update offset to current input line count.
+#
+#     For IN-PLACE mode (in_place=1):
+#       1. First run: Suppress entire file, save OUTPUT line count as offset.
+#       2. Subsequent runs:
+#          - Offset = lines already suppressed in file
+#          - New lines = current total - offset (appended by syslog)
+#          - Extract new lines, suppress them, append to file
+#          - Update offset = new total line count
 # ------------------------------------------------------------
 suppress_log_file_incremental()
 {
     local INPUT_FILE="$1"
     local OUTPUT_FILE="$2"
     local OFFSET_FILE="$3"
+    local IN_PLACE="${4:-0}"
 
-    # Get the previously processed line count (0 on first run)
-    local prev_offset
-    prev_offset=$(get_offset "$OFFSET_FILE")
-
-    # Count total lines in the source file
+    # Count total lines in the file
     local total_lines
     total_lines=$(wc -l < "$INPUT_FILE" 2>/dev/null | tr -d ' ')
     if [ -z "$total_lines" ] || ! echo "$total_lines" | grep -qE '^[0-9]+$'; then
         total_lines=0
     fi
 
+    # Skip if file is empty
+    if [ "$total_lines" -eq 0 ]; then
+        TOTAL_SKIPPED_FILES=$((TOTAL_SKIPPED_FILES + 1))
+        return 0
+    fi
+
+    # Get the previously processed/suppressed line count (0 on first run)
+    local prev_offset
+    prev_offset=$(get_offset "$OFFSET_FILE")
+
+    # For IN-PLACE mode
+    if [ "$IN_PLACE" -eq 1 ]; then
+        
+        # First run (no offset exists): suppress entire file
+        if [ "$prev_offset" -eq 0 ]; then
+            echo_t "  [in-place:first] $(basename "$INPUT_FILE"): suppressing all $total_lines line(s)"
+
+            # Track input lines
+            echo "$total_lines" >> /tmp/.log_suppress_input_count
+
+            # Process entire file, write to temp
+            local TEMP_OUT="${OUTPUT_FILE}.suppress.out"
+            suppress_log_file "$INPUT_FILE" "$TEMP_OUT" 0
+
+            # Count output lines (suppressed)
+            local output_lines=$(wc -l < "$TEMP_OUT" 2>/dev/null | tr -d ' ')
+            [ -z "$output_lines" ] && output_lines=0
+            echo "$output_lines" >> /tmp/.log_suppress_output_count
+
+            # Replace original with suppressed version
+            mv "$TEMP_OUT" "$OUTPUT_FILE"
+
+            # Save OUTPUT line count as offset for next run
+            set_offset "$OFFSET_FILE" "$output_lines"
+            return 0
+        fi
+
+        # Subsequent runs: check if new lines were appended
+        if [ "$total_lines" -le "$prev_offset" ]; then
+            # No new lines appended
+            TOTAL_SKIPPED_FILES=$((TOTAL_SKIPPED_FILES + 1))
+            return 0
+        fi
+
+        # Calculate new lines (appended after last suppression)
+        local new_lines=$((total_lines - prev_offset))
+        echo_t "  [in-place:incremental] $(basename "$INPUT_FILE"): $prev_offset suppressed, $new_lines new line(s) to process"
+
+        # Track input lines
+        echo "$new_lines" >> /tmp/.log_suppress_input_count
+
+        # Extract the new lines (everything after prev_offset)
+        local SLICE_FILE="${OUTPUT_FILE}.slice.tmp"
+        tail -n +"$((prev_offset + 1))" "$INPUT_FILE" > "$SLICE_FILE"
+
+        # Suppress the new lines
+        local SUPPRESSED_SLICE="${OUTPUT_FILE}.suppressed.tmp"
+        suppress_log_file "$SLICE_FILE" "$SUPPRESSED_SLICE" 0
+
+        # Count suppressed output
+        local suppressed_new_lines=$(wc -l < "$SUPPRESSED_SLICE" 2>/dev/null | tr -d ' ')
+        [ -z "$suppressed_new_lines" ] && suppressed_new_lines=0
+        echo "$suppressed_new_lines" >> /tmp/.log_suppress_output_count
+
+        # Build new file: [existing suppressed content] + [newly suppressed lines]
+        # Keep lines 1 to prev_offset (already suppressed), append new suppressed
+        local TEMP_OUT="${OUTPUT_FILE}.final.tmp"
+        head -n "$prev_offset" "$INPUT_FILE" > "$TEMP_OUT"
+        cat "$SUPPRESSED_SLICE" >> "$TEMP_OUT"
+
+        # Replace original
+        mv "$TEMP_OUT" "$OUTPUT_FILE"
+
+        # Update offset to new total suppressed line count
+        local new_offset=$((prev_offset + suppressed_new_lines))
+        set_offset "$OFFSET_FILE" "$new_offset"
+
+        # Cleanup
+        rm -f "$SLICE_FILE" "$SUPPRESSED_SLICE"
+        return 0
+    fi
+
+    # SEPARATE OUTPUT mode: use original incremental logic
     # Nothing new to process
     if [ "$total_lines" -le "$prev_offset" ]; then
-        # Track skipped files
         TOTAL_SKIPPED_FILES=$((TOTAL_SKIPPED_FILES + 1))
         return 0
     fi
@@ -622,7 +707,7 @@ suppress_log_file_incremental()
     local new_lines=$(( total_lines - prev_offset ))
     echo_t "  [incremental] $(basename "$INPUT_FILE"): $prev_offset lines already processed, $new_lines new line(s) to suppress"
 
-    # Track input lines for statistics (use file for cross-function persistence)
+    # Track input lines for statistics
     echo "$new_lines" >> /tmp/.log_suppress_input_count
 
     # Extract only the new lines into a temporary slice
@@ -646,12 +731,12 @@ suppress_log_file_incremental()
     local lines_written=$((output_after - output_before))
     [ "$lines_written" -lt 0 ] && lines_written=$output_after
     
-    # Track output lines (use file for cross-function persistence)
+    # Track output lines
     echo "$lines_written" >> /tmp/.log_suppress_output_count
 
     rm -f "$SLICE_FILE"
 
-    # Persist the new offset so next run knows where to continue from
+    # Persist the new offset
     set_offset "$OFFSET_FILE" "$total_lines"
 }
 
@@ -742,9 +827,9 @@ suppress_logs_in_directory()
         OFFSET_FILE="$OFFSET_DIR/${FILENAME}.offset"
 
         # Use incremental suppression:
-        #   - If an offset exists for this file, only process new lines.
-        #   - If no offset exists, full suppression (first time).
-        suppress_log_file_incremental "$file" "$OUT_FILE" "$OFFSET_FILE"
+        #   - For in-place mode: process entire file each time (no incremental)
+        #   - For separate output: if offset exists, only process new lines
+        suppress_log_file_incremental "$file" "$OUT_FILE" "$OFFSET_FILE" "$LOG_SUPPRESS_IN_PLACE"
 
         processed=$((processed + 1))
 
