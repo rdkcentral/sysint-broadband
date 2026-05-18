@@ -144,59 +144,91 @@ log_size_tracking()
     echo_t "SIZE_TRACK [${stage}]: ${dir} = ${size_kb} KB"
 }
 
-# Get process CPU time from /proc/self/stat (utime + stime in jiffies)
+# Get process CPU time from /proc/PID/stat (utime + stime in jiffies)
+# Works on all Linux including BusyBox
 get_proc_cpu_time()
 {
-    if [ -f /proc/self/stat ]; then
-        awk '{print $14+$15}' /proc/self/stat 2>/dev/null || echo 0
+    local pid="${1:-self}"
+    if [ -f "/proc/$pid/stat" ]; then
+        awk '{print $14+$15}' "/proc/$pid/stat" 2>/dev/null || echo 0
     else
         echo 0
     fi
 }
 
-# Get CPU usage for a specific process by PID using ps
-# Returns: cpu_percent
-get_process_cpu_usage()
+# Get system uptime in jiffies (centiseconds)
+get_system_uptime_jiffies()
 {
-    local pid="$1"
-    local cpu_pct=0
-    
-    if [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
-        # Use ps to get CPU percentage for the specific process
-        cpu_pct=$(ps -p "$pid" -o %cpu= 2>/dev/null | tr -d ' ' | cut -d'.' -f1)
-        [ -z "$cpu_pct" ] && cpu_pct=0
-        echo "$cpu_pct" | grep -qE '^[0-9]+$' || cpu_pct=0
+    if [ -f /proc/uptime ]; then
+        # /proc/uptime gives seconds with decimals, convert to centiseconds (jiffies at 100Hz)
+        awk '{printf "%.0f", $1 * 100}' /proc/uptime 2>/dev/null || echo 0
+    else
+        echo 0
     fi
-    
-    echo "$cpu_pct"
 }
 
-# Get memory usage for a specific process by PID using ps
-# Returns: mem_percent
+# Get process memory usage in KB from /proc/PID/status
+# Works on all Linux including BusyBox
+get_process_mem_kb()
+{
+    local pid="$1"
+    local mem_kb=0
+    
+    if [ -n "$pid" ] && [ -f "/proc/$pid/status" ]; then
+        # VmRSS is the resident set size (actual memory used)
+        mem_kb=$(grep -i "^VmRSS:" "/proc/$pid/status" 2>/dev/null | awk '{print $2}')
+        [ -z "$mem_kb" ] && mem_kb=0
+        echo "$mem_kb" | grep -qE '^[0-9]+$' || mem_kb=0
+    fi
+    
+    echo "$mem_kb"
+}
+
+# Get total system memory in KB
+get_total_mem_kb()
+{
+    local total_kb=0
+    if [ -f /proc/meminfo ]; then
+        total_kb=$(grep -i "^MemTotal:" /proc/meminfo 2>/dev/null | awk '{print $2}')
+        [ -z "$total_kb" ] && total_kb=1
+    fi
+    echo "$total_kb"
+}
+
+# Get process memory usage as percentage
 get_process_mem_usage()
 {
     local pid="$1"
     local mem_pct=0
     
-    if [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
-        # Use ps to get memory percentage for the specific process
-        mem_pct=$(ps -p "$pid" -o %mem= 2>/dev/null | tr -d ' ' | cut -d'.' -f1)
-        [ -z "$mem_pct" ] && mem_pct=0
-        echo "$mem_pct" | grep -qE '^[0-9]+$' || mem_pct=0
+    local proc_mem=$(get_process_mem_kb "$pid")
+    local total_mem=$(get_total_mem_kb)
+    
+    if [ "$total_mem" -gt 0 ] 2>/dev/null && [ "$proc_mem" -gt 0 ] 2>/dev/null; then
+        mem_pct=$((proc_mem * 100 / total_mem))
     fi
     
     echo "$mem_pct"
 }
 
-# Get process command name by PID
+# Get process command name from /proc/PID/comm or /proc/PID/cmdline
+# Works on all Linux including BusyBox
 get_process_cmd()
 {
     local pid="$1"
     local cmd=""
     
     if [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
-        cmd=$(ps -p "$pid" -o comm= 2>/dev/null)
-        [ -z "$cmd" ] && cmd="unknown"
+        # Try /proc/PID/comm first (cleaner, single word)
+        if [ -f "/proc/$pid/comm" ]; then
+            cmd=$(cat "/proc/$pid/comm" 2>/dev/null | tr -d '\n')
+        fi
+        # Fallback to cmdline if comm is empty
+        if [ -z "$cmd" ] && [ -f "/proc/$pid/cmdline" ]; then
+            cmd=$(cat "/proc/$pid/cmdline" 2>/dev/null | tr '\0' ' ' | awk '{print $1}')
+            cmd=$(basename "$cmd" 2>/dev/null)
+        fi
+        [ -z "$cmd" ] && cmd="sh"
     fi
     
     echo "$cmd"
@@ -211,36 +243,61 @@ init_cpu_monitor()
     log_cpu_overhead "╚════════════════════════════════════════════════════════════╝"
     
     CPU_MON_START_SEC=$(date +%s)
-    CPU_MON_START_PROC=$(get_proc_cpu_time)
+    CPU_MON_START_PROC=$(get_proc_cpu_time $$)
+    CPU_MON_START_UPTIME=$(get_system_uptime_jiffies)
     CPU_MON_PID=$$
     CPU_MON_SAMPLES=0
     CPU_MON_SUM=0
     CPU_MON_PEAK=0
     CPU_MON_MEM_PEAK=0
+    CPU_MON_LAST_PROC=$(get_proc_cpu_time $$)
+    CPU_MON_LAST_UPTIME=$(get_system_uptime_jiffies)
     
     # Initial snapshot
-    local init_cpu=$(get_process_cpu_usage $CPU_MON_PID)
-    local init_mem=$(get_process_mem_usage $CPU_MON_PID)
-    log_cpu_overhead "[INIT] PID: $CPU_MON_PID | Initial CPU: ${init_cpu}% | Initial Mem: ${init_mem}%"
+    local init_mem_kb=$(get_process_mem_kb $CPU_MON_PID)
+    local init_mem_pct=$(get_process_mem_usage $CPU_MON_PID)
+    local proc_cmd=$(get_process_cmd $CPU_MON_PID)
+    log_cpu_overhead "[INIT] PID: $CPU_MON_PID ($proc_cmd) | Initial Mem: ${init_mem_kb}KB (${init_mem_pct}%)"
 }
 
-# Sample per-process CPU during execution
+# Sample per-process CPU during execution using /proc filesystem
+# Calculates instantaneous CPU% based on jiffies delta since last sample
 sample_cpu()
 {
-    local cpu_pct=$(get_process_cpu_usage $CPU_MON_PID)
+    local current_proc=$(get_proc_cpu_time $CPU_MON_PID)
+    local current_uptime=$(get_system_uptime_jiffies)
+    
+    # Calculate delta since last sample
+    local proc_delta=$((current_proc - CPU_MON_LAST_PROC))
+    local uptime_delta=$((current_uptime - CPU_MON_LAST_UPTIME))
+    
+    # Calculate instantaneous CPU% (process jiffies / elapsed jiffies * 100)
+    local cpu_pct=0
+    if [ "$uptime_delta" -gt 0 ] 2>/dev/null; then
+        cpu_pct=$((proc_delta * 100 / uptime_delta))
+    fi
+    
+    # Get current memory
+    local mem_kb=$(get_process_mem_kb $CPU_MON_PID)
     local mem_pct=$(get_process_mem_usage $CPU_MON_PID)
     
+    # Update tracking
     CPU_MON_SUM=$((CPU_MON_SUM + cpu_pct))
     CPU_MON_SAMPLES=$((CPU_MON_SAMPLES + 1))
     [ "$cpu_pct" -gt "$CPU_MON_PEAK" ] && CPU_MON_PEAK=$cpu_pct
-    [ "$mem_pct" -gt "$CPU_MON_MEM_PEAK" ] && CPU_MON_MEM_PEAK=$mem_pct
+    [ "$mem_kb" -gt "$CPU_MON_MEM_PEAK" ] && CPU_MON_MEM_PEAK=$mem_kb
+    
+    # Update last values for next sample
+    CPU_MON_LAST_PROC=$current_proc
+    CPU_MON_LAST_UPTIME=$current_uptime
 }
 
 # Report per-process CPU overhead statistics
 report_cpu_overhead()
 {
     local end_sec=$(date +%s)
-    local end_proc=$(get_proc_cpu_time)
+    local end_proc=$(get_proc_cpu_time $$)
+    local end_uptime=$(get_system_uptime_jiffies)
     
     # Elapsed wall-clock time
     local elapsed=$((end_sec - CPU_MON_START_SEC))
@@ -250,11 +307,12 @@ report_cpu_overhead()
     local proc_jiffies=$((end_proc - CPU_MON_START_PROC))
     local proc_ms=$((proc_jiffies * 10))
     
-    # Calculate CPU overhead percentage (process CPU time / wall clock time)
+    # Calculate CPU overhead percentage using jiffies delta
+    # This is more accurate: (process_jiffies / elapsed_jiffies) * 100
+    local uptime_jiffies=$((end_uptime - CPU_MON_START_UPTIME))
     local cpu_overhead_pct=0
-    if [ "$elapsed" -gt 0 ]; then
-        # proc_ms is in milliseconds, elapsed is in seconds
-        cpu_overhead_pct=$((proc_ms / (elapsed * 10)))
+    if [ "$uptime_jiffies" -gt 0 ] 2>/dev/null; then
+        cpu_overhead_pct=$((proc_jiffies * 100 / uptime_jiffies))
     fi
     
     # Average CPU from samples
@@ -263,9 +321,14 @@ report_cpu_overhead()
         avg_cpu=$((CPU_MON_SUM / CPU_MON_SAMPLES))
     fi
     
-    # Final snapshot
-    local final_cpu=$(get_process_cpu_usage $CPU_MON_PID)
-    local final_mem=$(get_process_mem_usage $CPU_MON_PID)
+    # Final memory snapshot
+    local final_mem_kb=$(get_process_mem_kb $CPU_MON_PID)
+    local final_mem_pct=$(get_process_mem_usage $CPU_MON_PID)
+    local peak_mem_pct=0
+    local total_mem=$(get_total_mem_kb)
+    if [ "$total_mem" -gt 0 ] 2>/dev/null && [ "$CPU_MON_MEM_PEAK" -gt 0 ] 2>/dev/null; then
+        peak_mem_pct=$((CPU_MON_MEM_PEAK * 100 / total_mem))
+    fi
     
     log_cpu_overhead ""
     log_cpu_overhead "╔════════════════════════════════════════════════════════════════════╗"
@@ -277,18 +340,17 @@ report_cpu_overhead()
     log_cpu_overhead "╠════════════════════════════════════════════════════════════════════╣"
     log_cpu_overhead "║  TIMING:                                                           "
     log_cpu_overhead "║    Duration: ${elapsed} seconds                                    "
-    log_cpu_overhead "║    Process CPU time: ${proc_ms} ms                                 "
+    log_cpu_overhead "║    Process CPU time: ${proc_ms} ms (${proc_jiffies} jiffies)       "
     log_cpu_overhead "╠════════════════════════════════════════════════════════════════════╣"
     log_cpu_overhead "║  PER-PROCESS CPU USAGE:                                            "
     log_cpu_overhead "║    CPU Overhead: ${cpu_overhead_pct}%                              "
-    log_cpu_overhead "║    Peak CPU: ${CPU_MON_PEAK}%                                      "
+    log_cpu_overhead "║    Peak CPU (sampled): ${CPU_MON_PEAK}%                            "
     log_cpu_overhead "║    Average CPU (sampled): ${avg_cpu}%                              "
-    log_cpu_overhead "║    Final CPU: ${final_cpu}%                                        "
     log_cpu_overhead "║    Samples collected: ${CPU_MON_SAMPLES}                           "
     log_cpu_overhead "╠════════════════════════════════════════════════════════════════════╣"
     log_cpu_overhead "║  PER-PROCESS MEMORY USAGE:                                         "
-    log_cpu_overhead "║    Peak Memory: ${CPU_MON_MEM_PEAK}%                               "
-    log_cpu_overhead "║    Final Memory: ${final_mem}%                                     "
+    log_cpu_overhead "║    Peak Memory: ${CPU_MON_MEM_PEAK} KB (${peak_mem_pct}%)          "
+    log_cpu_overhead "║    Final Memory: ${final_mem_kb} KB (${final_mem_pct}%)            "
     log_cpu_overhead "╠════════════════════════════════════════════════════════════════════╣"
     
     # Overhead assessment based on per-process readings
