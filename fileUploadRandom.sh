@@ -85,6 +85,18 @@ if [ "$execution_mode" = "cron" ]; then
     fi
 fi
 
+wait_for_cron() {
+    while true; do
+        CRON_PID=`pidof crond`
+
+        if [ -n "$CRON_PID" ]; then
+            break
+        else
+            sleep 5
+        fi
+    done
+}
+
 generate_random_delay()
 {
     rand_hr=0
@@ -380,6 +392,7 @@ service_mode() {
 if [ "$execution_mode" = "cron" ]; then
     CRON_MODE=1
 
+    wait_for_cron
     if [ ! -f "$CRON_SETUP_FLAG" ]; then
         install_cron_entry
         touch "$CRON_SETUP_FLAG"

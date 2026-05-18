@@ -135,6 +135,18 @@ getBuildType()
    
 }
 
+wait_for_cron() {
+    while true; do
+        CRON_PID=`pidof crond`
+
+        if [ -n "$CRON_PID" ]; then
+            break
+        else
+            sleep 5
+        fi
+    done
+}
+
 generate_random_sleep()
 {
 
@@ -1240,6 +1252,7 @@ service_mode() {
 if [ "$execution_mode" = "cron" ]; then
     CRON_MODE=1
 
+    wait_for_cron
     if [ ! -f "$CRON_INITIALIZED_FLAG" ]; then
         install_cron_entry
         touch "$CRON_INITIALIZED_FLAG"
