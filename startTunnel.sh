@@ -24,9 +24,6 @@
 
 source /etc/waninfo.sh
 
-UseLANIFIPV6=`sysevent get LANIPv6GUASupport`
-
-
 if [ -f /lib/rdk/t2Shared_api.sh ]; then
                 source /lib/rdk/t2Shared_api.sh
 fi
@@ -70,26 +67,9 @@ case $oper in
 		IpCheckVal=$(echo ${CM_IPV4} | tr "." " " | awk '{ print $3"."$4 }')
 		Check=$(ip_to_hex $IpCheckVal)
 		# getting the IPV6 address for CM
-                if [ "$BOX_TYPE" = "SCER11BEL" -a "$UseLANIFIPV6" = "true" ] ; then
-                    if [ -z "$CM_IPV4" ]; then
-                        # In IPv6 only case (MAP-T), and if IPv6 GUA on LAN enabled case, use brlan0 interface to get v6 global address.
-                        CM_IP=`ip -6 addr show dev brlan0 scope global | awk '/inet/{print $2}' | cut -d '/' -f1 | head -n1`
-                    else
-                        CM_IP=$CM_IPV4
-                    fi
-                    echo "CM_IP-$CM_IP"
-                # creating a ssh tunnel directly to the LANIP:22 for IPV6 only scenario
-                elif [ "x$BOX_TYPE" = "xHUB4" ] || [ "x$BOX_TYPE" = "xSR300" ] || [ "x$BOX_TYPE" = "xSR213" ] || [ "x$BOX_TYPE" = "xSE501" ] || [ "x$BOX_TYPE" = "xWNXL11BWL" ] || [ "$UseLANIFIPV6" = "true" ]; then
-                        if [ -z "$CM_IPV4" ]; then
-                                CM_IP=`syscfg get lan_ipaddr`
-                        else
-                                CM_IP=$CM_IPV4
-                        fi
-                else
-                         CM_IP=`ifconfig $WAN_INTERFACE | grep Global |  awk '/inet6/{print $3}' | cut -d '/' -f1`
-                         if [ -z "$CM_IP" ]; then
-                            CM_IP=$CM_IPV4
-                         fi
+                CM_IP=`ifconfig $WAN_INTERFACE | grep Global |  awk '/inet6/{print $3}' | cut -d '/' -f1`
+                if [ -z "$CM_IP" ]; then
+                   CM_IP=$CM_IPV4
                 fi
 	     else
 		if ( [ "$MANUFACTURE" = "Technicolor" ] || [ "$MANUFACTURE" = "Sercomm" ] ) && [ "$BOX_TYPE" != "XB3" ]; then 

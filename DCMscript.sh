@@ -116,8 +116,6 @@ HTTP_CODE=/tmp/.dcm_http_code
 RETRY_DELAY=60
 MAX_SSH_RETRY=3
 
-UseLANIFIPV6=`sysevent get LANIPv6GUASupport`
-
 if [ "x$BOX_TYPE" = "xSR300" ] ;then
     while :
     do
@@ -457,12 +455,8 @@ sendHttpRequestToServer()
 
     # If interface doesnt have ipv6 address then we will force the curl to go with ipv4.
     # Otherwise we will not specify the ip address family in curl options
-    if [ "x$BOX_TYPE" = "xHUB4" ] || [ "x$BOX_TYPE" = "xSR300" ] || [ "x$BOX_TYPE" = "xSR213" ] || [ "x$BOX_TYPE" = "xSE501" ] || [ "x$BOX_TYPE" = "xWNXL11BWL" ] || [ "$UseLANIFIPV6" = "true" ]; then
-        addr_type=""
-    else
-        addr_type=""
-        [ "x`ifconfig $EROUTER_INTERFACE | grep inet6 | grep -i 'Global'`" != "x" ] || addr_type="-4"
-    fi
+    addr_type=""
+    [ "x`ifconfig $EROUTER_INTERFACE | grep inet6 | grep -i 'Global'`" != "x" ] || addr_type="-4"
     partnerId=$(getPartnerId)
     accountId=$(getAccountId)
     if [ $MODEL_NUM = "WNXL11BWL" ]; then
