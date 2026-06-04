@@ -33,7 +33,18 @@ if [ -z "$StatusOCSPCA" ]; then
     StatusOCSPCA=`dmcli eRT getv Device.DeviceInfo.X_RDKCENTRAL-COM_RFC.Feature.CRL.DirectOCSP | grep value | awk '{print $5}'`
 fi
 
+if [ "$StatusOCSPSTAPLE" != "true" ]; then
+      echo "StatusOCSPSTAPLE is setting true"
+      syscfg set "EnableOCSPStapling" "true"
+      syscfg commit
+fi
 
+if [ "$StatusOCSPCA" != "true" ]; then
+      echo "StatusOCSPCA is setting true"
+      syscfg set "EnableOCSPCA" "true"
+      syscfg commit
+fi
+      
 echo "status of RFC StatusOCSPSTAPLE $StatusOCSPSTAPLE StatusOCSPCA $StatusOCSPCA" >> $OCSP_LOG_FILE
 
 if [ "$StatusOCSPSTAPLE" = "true" ]; then
