@@ -34,16 +34,19 @@ if [ -z "$StatusOCSPCA" ]; then
 fi
 
 if [ "$StatusOCSPSTAPLE" != "true" ]; then
-      echo "StatusOCSPSTAPLE is setting true"
+      echo "Defaulting StatusOCSPSTAPLE set to true" >> $OCSP_LOG_FILE
       syscfg set "EnableOCSPStapling" "true"
       syscfg commit
 fi
 
 if [ "$StatusOCSPCA" != "true" ]; then
-      echo "StatusOCSPCA is setting true"
+      echo "Defaulting StatusOCSPCA set to true" >> $OCSP_LOG_FILE
       syscfg set "EnableOCSPCA" "true"
       syscfg commit
 fi
+
+StatusOCSPSTAPLE=`syscfg get EnableOCSPStapling`
+StatusOCSPCA=`syscfg get EnableOCSPCA`
       
 echo "status of RFC StatusOCSPSTAPLE $StatusOCSPSTAPLE StatusOCSPCA $StatusOCSPCA" >> $OCSP_LOG_FILE
 
