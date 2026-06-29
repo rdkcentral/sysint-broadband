@@ -141,11 +141,7 @@ case $oper in
              else
                      REVSSH_PID1=""
              fi
-<<<<<<< HEAD
              GetConfigFile /tmp/webpa-user stdout | /usr/bin/ssh -i /dev/stdin $args &
-=======
-             GetConfigFile /tmp/webpa-user stdout | /usr/bin/ssh -i /dev/stdin $args &
->>>>>>> 85b0650 (RDK-61614: Remove Sensitive StringFrom Open Source)
              sleep 10
              REVSSH_PID2=`cat /var/tmp/rssh.pid `
              if [ -z "$REVSSH_PID2" ] ||[ "$REVSSH_PID1" == "$REVSSH_PID2" ]; then
