@@ -70,7 +70,7 @@ TELEMETRY_EXEC_COMPLETE="/tmp/.dca_done"
 
 
 SCP_COMPLETE="/tmp/.scp_done"
-PEER_COMM_ID="/tmp/elxrretyt-dca.swr"
+PEER_COMM_ID="/tmp/interchip"
 IDLE_TIMEOUT=30
 
 MAX_SSH_RETRY=3

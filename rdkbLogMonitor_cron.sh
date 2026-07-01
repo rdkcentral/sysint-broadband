@@ -1065,7 +1065,7 @@ regular_upload_state()
 ########################################################
 bootup_nvram_upload()
 {
-PEER_COMM_ID="/tmp/elxrretyt-logm.swr"
+PEER_COMM_ID="/tmp/interchip"
 
 RebootReason=`syscfg get X_RDKCENTRAL-COM_LastRebootReason`
 
