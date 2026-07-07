@@ -172,22 +172,51 @@ mkdir -p "$OFFSET_DIR"
 ##########################################################################
 # RDK Logger Component File Detection
 # Files that log through rdk_logger should NOT be suppressed
-# RDK logger files are defined in /etc/logFiles.properties (LOG_FILES_NAMES)
+# Sources (checked in order):
+#   1. /etc/log4crc XML - authoritative source of rdk_logger appenders
+#   2. /etc/logFiles.properties (LOG_FILES_NAMES variable)
+#   3. ARM_FILE_LIST / ATOM_FILE_LIST variables
 ##########################################################################
 
-# Get the list of RDK logger file patterns
-# These are sourced from /etc/logFiles.properties which defines LOG_FILES_NAMES
-# Files matching these patterns are logged via rdk_logger and should be excluded
-get_rdk_logger_patterns() {
-    # LOG_FILES_NAMES is sourced from logFiles.properties at the top of script
-    # It contains patterns like: TR69log.txt.* PAMlog.txt.* WiFilog.txt.* etc.
-    if [ -n "$LOG_FILES_NAMES" ]; then
-        echo "$LOG_FILES_NAMES"
-    else
-        # Fallback: If LOG_FILES_NAMES not available, return empty
-        # This means all files will be processed (safer default)
-        echo ""
+# Cache for RDK logger prefixes (populated once, reused per file check)
+RDK_LOGGER_PREFIXES=""
+
+# Extract RDK logger file prefixes from log4crc XML and logFiles.properties
+# Builds a space-separated list of file prefixes (e.g., "TR69log.txt PAMlog.txt ...")
+build_rdk_logger_prefix_cache() {
+    local prefixes=""
+
+    # Source 1: Parse /etc/log4crc for appender prefix= attributes
+    # This is the authoritative source — lists all rdk_logger file destinations
+    if [ -f /etc/log4crc ]; then
+        local log4crc_prefixes
+        log4crc_prefixes=$(grep -o 'prefix="[^"]*"' /etc/log4crc 2>/dev/null | sed 's/prefix="//;s/"//' | sort -u)
+        if [ -n "$log4crc_prefixes" ]; then
+            prefixes="$log4crc_prefixes"
+        fi
     fi
+
+    # Source 2: LOG_FILES_NAMES from /etc/logFiles.properties
+    if [ -n "$LOG_FILES_NAMES" ]; then
+        for pattern in $LOG_FILES_NAMES; do
+            # Strip wildcard suffix: "TR69log.txt.*" -> "TR69log.txt"
+            local clean=$(echo "$pattern" | sed 's/\.\*$//' | sed 's/\*$//')
+            [ -n "$clean" ] && prefixes="$prefixes $clean"
+        done
+    fi
+
+    # Source 3: ARM_FILE_LIST and ATOM_FILE_LIST
+    local all_file_lists="$ARM_FILE_LIST $ATOM_FILE_LIST"
+    for pattern in $all_file_lists; do
+        pattern=$(echo "$pattern" | tr '{},' ' ')
+        for p in $pattern; do
+            local clean=$(echo "$p" | sed 's/\.\*$//' | sed 's/\*$//' | sed 's/\.[0-9]*$//')
+            [ -n "$clean" ] && prefixes="$prefixes $clean"
+        done
+    done
+
+    # Deduplicate
+    RDK_LOGGER_PREFIXES=$(echo "$prefixes" | tr ' ' '\n' | sort -u | tr '\n' ' ')
 }
 
 # Check if a file is an RDK logger component file
@@ -195,43 +224,26 @@ get_rdk_logger_patterns() {
 is_rdk_logger_file() {
     local filename="$1"
     local basename_file=$(basename "$filename")
-    
-    # Get the list of RDK logger file patterns from logFiles.properties
-    local rdk_patterns=$(get_rdk_logger_patterns)
-    
-    # If no patterns defined, assume it's NOT an RDK logger file (process it)
-    if [ -z "$rdk_patterns" ]; then
+
+    # Build cache on first call
+    if [ -z "$RDK_LOGGER_PREFIXES" ]; then
+        build_rdk_logger_prefix_cache
+    fi
+
+    # No patterns found — can't identify RDK files, allow suppression
+    if [ -z "$RDK_LOGGER_PREFIXES" ]; then
         return 1
     fi
-    
-    # Check against each pattern in LOG_FILES_NAMES
-    for pattern in $rdk_patterns; do
-        # Remove wildcard suffix for comparison (e.g., "TR69log.txt.*" -> "TR69log.txt")
-        local clean_pattern=$(echo "$pattern" | sed 's/\.\*$//' | sed 's/\*$//')
-        
-        # Check if filename starts with the pattern (prefix match)
+
+    # Check if filename matches any known RDK logger prefix
+    for prefix in $RDK_LOGGER_PREFIXES; do
         case "$basename_file" in
-            ${clean_pattern}*|${pattern})
+            ${prefix}|${prefix}.[0-9]*|${prefix}[0-9]*)
                 return 0  # Is an RDK logger file - SKIP suppression
                 ;;
         esac
     done
-    
-    # Also check ARM_FILE_LIST and ATOM_FILE_LIST if defined
-    local all_file_lists="$ARM_FILE_LIST $ATOM_FILE_LIST"
-    for pattern in $all_file_lists; do
-        # Clean up pattern (remove braces, commas)
-        pattern=$(echo "$pattern" | tr '{},' ' ')
-        for p in $pattern; do
-            local clean_p=$(echo "$p" | sed 's/\.\*$//' | sed 's/\*$//' | sed 's/\.[0-9]*$//')
-            case "$basename_file" in
-                ${clean_p}*|${p})
-                    return 0  # Is an RDK logger file
-                    ;;
-            esac
-        done
-    done
-    
+
     return 1  # Not an RDK logger file - ALLOW suppression
 }
 
@@ -1051,6 +1063,12 @@ suppress_log_file_incremental() {
             # Replace original with suppressed version
             mv "$TEMP_OUT" "$OUTPUT_FILE"
             
+            # Log per-file stats
+            local saved=$((total_lines - output_lines))
+            local pct=0
+            [ "$total_lines" -gt 0 ] && pct=$((saved * 100 / total_lines))
+            echo "$(basename "$INPUT_FILE")|$total_lines|$output_lines|$saved|$pct" >> /tmp/.log_suppress_per_file
+
             # Save OUTPUT line count as offset for next run
             set_offset "$OFFSET_FILE" "$output_lines"
             return 0
@@ -1096,6 +1114,12 @@ suppress_log_file_incremental() {
         local new_offset=$((prev_offset + suppressed_new_lines))
         set_offset "$OFFSET_FILE" "$new_offset"
         
+        # Log per-file stats
+        local saved=$((new_lines - suppressed_new_lines))
+        local pct=0
+        [ "$new_lines" -gt 0 ] && pct=$((saved * 100 / new_lines))
+        echo "$(basename "$INPUT_FILE")|$new_lines|$suppressed_new_lines|$saved|$pct" >> /tmp/.log_suppress_per_file
+
         # Cleanup
         rm -f "$SLICE_FILE" "$SUPPRESSED_SLICE"
         return 0
@@ -1138,6 +1162,12 @@ suppress_log_file_incremental() {
     # Track output lines
     echo "$lines_written" >> /tmp/.log_suppress_output_count
     
+    # Log per-file stats
+    local saved=$((new_lines - lines_written))
+    local pct=0
+    [ "$new_lines" -gt 0 ] && pct=$((saved * 100 / new_lines))
+    echo "$(basename "$INPUT_FILE")|$new_lines|$lines_written|$saved|$pct" >> /tmp/.log_suppress_per_file
+
     rm -f "$SLICE_FILE"
     
     # Persist the new offset
@@ -1158,8 +1188,8 @@ suppress_logs_in_directory() {
     local size_after=0
     
     # Initialize line counters for this run (using temp files for cross-function persistence)
-    rm -f /tmp/.log_suppress_input_count /tmp/.log_suppress_output_count
-    touch /tmp/.log_suppress_input_count /tmp/.log_suppress_output_count
+    rm -f /tmp/.log_suppress_input_count /tmp/.log_suppress_output_count /tmp/.log_suppress_per_file
+    touch /tmp/.log_suppress_input_count /tmp/.log_suppress_output_count /tmp/.log_suppress_per_file
     TOTAL_SKIPPED_FILES=0
     
     # Log suppression session start
@@ -1305,6 +1335,16 @@ suppress_logs_in_directory() {
     
     # Log comprehensive statistics to dedicated file
     log_suppress_stats "--------------------------------------------------------"
+    log_suppress_stats "PER-FILE SUPPRESSION:"
+    log_suppress_stats "--------------------------------------------------------"
+    log_suppress_stats "  File                          | Lines In | Lines Out | Saved | %"
+    log_suppress_stats "  ------------------------------|----------|-----------|-------|---"
+    if [ -s /tmp/.log_suppress_per_file ]; then
+        while IFS='|' read -r fname fin fout fsaved fpct; do
+            log_suppress_stats "  $(printf '%-30s' "$fname")| $(printf '%8s' "$fin") | $(printf '%9s' "$fout") | $(printf '%5s' "$fsaved") | ${fpct}%"
+        done < /tmp/.log_suppress_per_file
+    fi
+    log_suppress_stats "--------------------------------------------------------"
     log_suppress_stats "SUPPRESSION RESULTS:"
     log_suppress_stats "--------------------------------------------------------"
     log_suppress_stats "  Total files in directory: $total"
@@ -1339,7 +1379,7 @@ suppress_logs_in_directory() {
     echo_t "Stats logged to: $LOG_SUPPRESS_STATS_LOG"
     
     # Cleanup temp files
-    rm -f /tmp/.log_suppress_input_count /tmp/.log_suppress_output_count
+    rm -f /tmp/.log_suppress_input_count /tmp/.log_suppress_output_count /tmp/.log_suppress_per_file
     
     # Report CPU overhead
     report_cpu_overhead
