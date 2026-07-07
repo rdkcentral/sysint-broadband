@@ -406,7 +406,34 @@ syncLogs_nvram2()
         nice -n 19 journalctl -k --since "${difference_time} sec ago" >> ${DMESG_FILE}
     fi
 
+    # Log size tracking for suppression analysis
+    LOG_SUPPRESS_STATS_LOG="/rdklogs/logs/log_suppress_stats.txt"
+    TIMESTAMP=`date '+%Y-%m-%d %H:%M:%S'`
+    
+    # Ensure LOG_PATH is set (fallback to /rdklogs/logs if not set)
+    [ -z "$LOG_PATH" ] && LOG_PATH="/rdklogs/logs/"
+    
+    # Log size BEFORE sync
+    size_before_sync=`du -sk "$LOG_PATH" 2>/dev/null | awk '{print $1}'`
+    [ -z "$size_before_sync" ] && size_before_sync=0
+    echo "[$TIMESTAMP] SIZE_TRACK [BEFORE_SYNC] $LOG_PATH Size=${size_before_sync}KB" >> "$LOG_SUPPRESS_STATS_LOG"
+    echo_t "SIZE_TRACK [BEFORE_SYNC] $LOG_PATH Size=${size_before_sync}KB"
+
     log_files_sync_to_nvram2 $option
+
+    # Apply log suppression to reduce repeated log patterns before upload
+    # Suppression is controlled via TR-181 Device.DeviceInfo.X_RDK_LogSuppression.Enable
+    # or syscfg log_suppress_enable. Only non-RDK logger component files are suppressed.
+    # Size tracking (AFTER_SYNC, AFTER_SUPPRESS, REDUCTION) is handled inside log_suppress.sh
+    # Offsets are cleared after successful upload in uploadRDKBLogs.sh
+    if [ -f "$RDK_LOGGER_PATH/log_suppress.sh" ]; then
+        echo_t "Applying log suppression to synced logs in $LOG_SYNC_PATH"
+        sh $RDK_LOGGER_PATH/log_suppress.sh "$LOG_SYNC_PATH"
+    else
+        echo_t "log_suppress.sh not found at $RDK_LOGGER_PATH/log_suppress.sh - skipping suppression"
+        TIMESTAMP=`date '+%Y-%m-%d %H:%M:%S'`
+        echo "[$TIMESTAMP] WARN: log_suppress.sh not found at $RDK_LOGGER_PATH/log_suppress.sh" >> "$LOG_SUPPRESS_STATS_LOG"
+    fi
 
     if [ -f /tmp/backup_onboardlogs ]; then
         backup_onboarding_logs
@@ -676,10 +703,19 @@ backupnvram2logs()
                 echo "tar activation logs from backupnvram2logs"
                 copy_onboardlogs "$LOG_SYNC_PATH"
                 tar -X $PATTERN_FILE -cvzf $MAC"_Logs_"$dt"_activation_log.tgz" $LOG_SYNC_PATH
+                TAR_FILE="$MAC"_Logs_"$dt"_activation_log.tgz""
                 rm -rf /tmp/backup_onboardlogs
             else
                 echo "tar logs from backupnvram2logs"
 	            tar -X $PATTERN_FILE -cvzf $MAC"_Logs_$dt.tgz" $LOG_SYNC_PATH
+	            TAR_FILE="$MAC"_Logs_$dt.tgz""
+	        fi
+	        # Log tar file size after suppression
+	        if [ -f "$TAR_FILE" ]; then
+	            TAR_SIZE_BYTES=`ls -l "$TAR_FILE" | awk '{print $5}'`
+	            TAR_SIZE_KB=$((TAR_SIZE_BYTES / 1024))
+	            echo "[`date '+%Y-%m-%d %H:%M:%S'`] SIZE_TRACK [TAR_AFTER_SUPPRESS] File=$TAR_FILE Size=${TAR_SIZE_KB}KB (${TAR_SIZE_BYTES} bytes)" >> /rdklogs/logs/log_suppress_stats.txt
+	            echo_t "RDK_LOGGER: Tar file size after suppression: ${TAR_SIZE_KB}KB ($TAR_FILE)"
 	        fi
         fi
 
@@ -705,6 +741,12 @@ backupnvram2logs()
 
 	for fname in $FILES
 	do
+		# Skip truncating the log suppression stats files - they need to persist
+		case "$fname" in
+			log_suppress_stats.txt|log_suppress_cpu_overhead.txt)
+				continue
+				;;
+		esac
 		>$fname;
 	done
 
@@ -781,11 +823,22 @@ backupnvram2logs_on_reboot()
 	    echo "tar activation logs from backupnvram2logs_on_reboot"
 	    copy_onboardlogs "$TarFolder"
 	    tar -X $PATTERN_FILE -cvzf $MAC"_Logs_"$dt"_activation_log.tgz" $TarFolder
+	    TAR_FILE="$MAC"_Logs_"$dt"_activation_log.tgz""
 	    rm -rf /tmp/backup_onboardlogs
     else
         echo "tar logs from backupnvram2logs_on_reboot"
 	    tar -X $PATTERN_FILE -cvzf $MAC"_Logs_$dt.tgz" $TarFolder
+	    TAR_FILE="$MAC"_Logs_$dt.tgz""
     fi
+
+    # Log tar file size after suppression
+    if [ -f "$TAR_FILE" ]; then
+        TAR_SIZE_BYTES=`ls -l "$TAR_FILE" | awk '{print $5}'`
+        TAR_SIZE_KB=$((TAR_SIZE_BYTES / 1024))
+        echo "[`date '+%Y-%m-%d %H:%M:%S'`] SIZE_TRACK [TAR_AFTER_SUPPRESS] File=$TAR_FILE Size=${TAR_SIZE_KB}KB (${TAR_SIZE_BYTES} bytes)" >> /rdklogs/logs/log_suppress_stats.txt
+        echo_t "RDK_LOGGER: Tar file size after suppression: ${TAR_SIZE_KB}KB ($TAR_FILE)"
+    fi
+
 	rm $PATTERN_FILE
 	
 	rm -rf $TarFolder*.txt*
@@ -897,6 +950,13 @@ backupAllLogs()
 
 	for fname in $SOURCE_FILES
 	do
+		# Skip truncating the log suppression stats files - they need to persist
+		case "$fname" in
+			log_suppress_stats.txt|log_suppress_cpu_overhead.txt)
+				$operation $source$fname $dt
+				continue
+				;;
+		esac
 		$operation $source$fname $dt; >$source$fname;
 	done
 	cp /version.txt $dt
