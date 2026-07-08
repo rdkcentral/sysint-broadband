@@ -73,7 +73,15 @@ fi
 get_log_suppress_enable() {
     local enable_value=""
     
-    # Try TR-181 first (dmcli)
+    # Check syscfg first (always available, even during early bootup)
+    enable_value=$(syscfg get RDKLogSuppressorEnable 2>/dev/null)
+    if [ -n "$enable_value" ]; then
+        echo_t "Log suppression enable from syscfg: $enable_value"
+        echo "$enable_value"
+        return
+    fi
+
+    # Try TR-181 (dmcli) as fallback
     # Path: Device.DeviceInfo.X_RDKCENTRAL-COM_RFC.Feature.RDKLogSuppressor.Enable
     if [ -x /usr/bin/dmcli ]; then
         enable_value=$(dmcli eRT retv Device.DeviceInfo.X_RDKCENTRAL-COM_RFC.Feature.RDKLogSuppressor.Enable 2>/dev/null | grep "value:" | cut -d':' -f3 | tr -d ' ')
@@ -84,16 +92,7 @@ get_log_suppress_enable() {
         fi
     fi
     
-    # Fallback to syscfg (RDKLogSuppressorEnable)
-    enable_value=$(syscfg get RDKLogSuppressorEnable 2>/dev/null)
-    if [ -n "$enable_value" ]; then
-        echo_t "Log suppression enable from syscfg: $enable_value"
-        echo "$enable_value"
-        return
-    fi
-    
-    # Default: enabled (suppressor runs by default at bootup with pattern_length=10;
-    # after bootup, TR-181/syscfg can explicitly disable if needed)
+    # Default: enabled
     echo_t "Log suppression enable not configured, defaulting to true"
     echo "true"
 }
@@ -103,7 +102,15 @@ get_log_suppress_enable() {
 get_pattern_length() {
     local pattern_len=""
     
-    # Try TR-181 first (dmcli)
+    # Check syscfg first (always available, even during early bootup)
+    pattern_len=$(syscfg get RDKLogSuppressorMaxPatternLength 2>/dev/null)
+    if [ -n "$pattern_len" ] && echo "$pattern_len" | grep -qE '^[0-9]+$'; then
+        echo_t "Pattern length from syscfg: $pattern_len"
+        echo "$pattern_len"
+        return
+    fi
+
+    # Try TR-181 (dmcli) as fallback
     # Path: Device.DeviceInfo.X_RDKCENTRAL-COM_RFC.Feature.RDKLogSuppressor.MaxPatternLength
     if [ -x /usr/bin/dmcli ]; then
         pattern_len=$(dmcli eRT retv Device.DeviceInfo.X_RDKCENTRAL-COM_RFC.Feature.RDKLogSuppressor.MaxPatternLength 2>/dev/null | grep "value:" | cut -d':' -f3 | tr -d ' ')
@@ -114,15 +121,7 @@ get_pattern_length() {
         fi
     fi
     
-    # Fallback to syscfg (RDKLogSuppressorMaxPatternLength)
-    pattern_len=$(syscfg get RDKLogSuppressorMaxPatternLength 2>/dev/null)
-    if [ -n "$pattern_len" ] && echo "$pattern_len" | grep -qE '^[0-9]+$'; then
-        echo_t "Pattern length from syscfg: $pattern_len"
-        echo "$pattern_len"
-        return
-    fi
-    
-    # Default pattern length (matches utopia system_defaults)
+    # Default pattern length
     echo_t "Pattern length not configured, defaulting to 10"
     echo "10"
 }
