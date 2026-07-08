@@ -92,9 +92,10 @@ get_log_suppress_enable() {
         return
     fi
     
-    # Default: disabled (to be safe, require explicit enable)
-    echo_t "Log suppression enable not configured, defaulting to false"
-    echo "false"
+    # Default: enabled (suppressor runs by default at bootup with pattern_length=10;
+    # after bootup, TR-181/syscfg can explicitly disable if needed)
+    echo_t "Log suppression enable not configured, defaulting to true"
+    echo "true"
 }
 
 # Get pattern length from TR-181 or syscfg
