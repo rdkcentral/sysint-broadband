@@ -1069,6 +1069,7 @@ suppress_log_file_incremental() {
             local pct=0
             [ "$total_lines" -gt 0 ] && pct=$((saved * 100 / total_lines))
             echo "$(basename "$INPUT_FILE")|$total_lines|$output_lines|$saved|$pct" >> /tmp/.log_suppress_per_file
+            echo_t "  [RESULT] $(basename "$INPUT_FILE"): ${total_lines} -> ${output_lines} lines (saved ${saved}, ${pct}%)"
 
             # Save OUTPUT line count as offset for next run
             set_offset "$OFFSET_FILE" "$output_lines"
@@ -1120,6 +1121,7 @@ suppress_log_file_incremental() {
         local pct=0
         [ "$new_lines" -gt 0 ] && pct=$((saved * 100 / new_lines))
         echo "$(basename "$INPUT_FILE")|$new_lines|$suppressed_new_lines|$saved|$pct" >> /tmp/.log_suppress_per_file
+        echo_t "  [RESULT] $(basename "$INPUT_FILE"): ${new_lines} -> ${suppressed_new_lines} lines (saved ${saved}, ${pct}%)"
 
         # Cleanup
         rm -f "$SLICE_FILE" "$SUPPRESSED_SLICE"
@@ -1168,6 +1170,7 @@ suppress_log_file_incremental() {
     local pct=0
     [ "$new_lines" -gt 0 ] && pct=$((saved * 100 / new_lines))
     echo "$(basename "$INPUT_FILE")|$new_lines|$lines_written|$saved|$pct" >> /tmp/.log_suppress_per_file
+    echo_t "  [RESULT] $(basename "$INPUT_FILE"): ${new_lines} -> ${lines_written} lines (saved ${saved}, ${pct}%)"
 
     rm -f "$SLICE_FILE"
     
@@ -1209,6 +1212,14 @@ suppress_logs_in_directory() {
     
     # Start CPU monitoring
     init_cpu_monitor
+    
+    # Cleanup: remove any stale offset directory inside the logs directory
+    # Offsets are stored at /nvram2/.log_suppress_offsets (outside logs dir)
+    # so they are NOT included in tar/upload to cloud
+    if [ -d "$dir/.log_suppress_offsets" ]; then
+        rm -rf "$dir/.log_suppress_offsets"
+        echo_t "Cleaned up stale offset directory from $dir/.log_suppress_offsets"
+    fi
     
     # Calculate total size BEFORE suppression (excluding offsets dir)
     # Measure BEFORE the offset clearing and processing to get pure log size
