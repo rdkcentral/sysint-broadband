@@ -76,7 +76,7 @@ get_log_suppress_enable() {
     # Check syscfg first (always available, even during early bootup)
     enable_value=$(syscfg get RDKLogSuppressorEnable 2>/dev/null)
     if [ -n "$enable_value" ]; then
-        echo_t "Log suppression enable from syscfg: $enable_value"
+        echo_t "Log suppression enable from syscfg: $enable_value" >&2
         echo "$enable_value"
         return
     fi
@@ -86,14 +86,14 @@ get_log_suppress_enable() {
     if [ -x /usr/bin/dmcli ]; then
         enable_value=$(dmcli eRT retv Device.DeviceInfo.X_RDKCENTRAL-COM_RFC.Feature.RDKLogSuppressor.Enable 2>/dev/null | grep "value:" | cut -d':' -f3 | tr -d ' ')
         if [ -n "$enable_value" ]; then
-            echo_t "Log suppression enable from TR-181: $enable_value"
+            echo_t "Log suppression enable from TR-181: $enable_value" >&2
             echo "$enable_value"
             return
         fi
     fi
     
     # Default: enabled
-    echo_t "Log suppression enable not configured, defaulting to true"
+    echo_t "Log suppression enable not configured, defaulting to true" >&2
     echo "true"
 }
 
@@ -105,7 +105,7 @@ get_pattern_length() {
     # Check syscfg first (always available, even during early bootup)
     pattern_len=$(syscfg get RDKLogSuppressorMaxPatternLength 2>/dev/null)
     if [ -n "$pattern_len" ] && echo "$pattern_len" | grep -qE '^[0-9]+$'; then
-        echo_t "Pattern length from syscfg: $pattern_len"
+        echo_t "Pattern length from syscfg: $pattern_len" >&2
         echo "$pattern_len"
         return
     fi
@@ -115,14 +115,14 @@ get_pattern_length() {
     if [ -x /usr/bin/dmcli ]; then
         pattern_len=$(dmcli eRT retv Device.DeviceInfo.X_RDKCENTRAL-COM_RFC.Feature.RDKLogSuppressor.MaxPatternLength 2>/dev/null | grep "value:" | cut -d':' -f3 | tr -d ' ')
         if [ -n "$pattern_len" ] && echo "$pattern_len" | grep -qE '^[0-9]+$'; then
-            echo_t "Pattern length from TR-181: $pattern_len"
+            echo_t "Pattern length from TR-181: $pattern_len" >&2
             echo "$pattern_len"
             return
         fi
     fi
     
     # Default pattern length
-    echo_t "Pattern length not configured, defaulting to 10"
+    echo_t "Pattern length not configured, defaulting to 10" >&2
     echo "10"
 }
 
