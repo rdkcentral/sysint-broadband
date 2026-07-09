@@ -1,0 +1,12 @@
+[Unit]
+Description=Log Suppression Test Generator
+After=CcspdStart.service
+
+[Service]
+Type=simple
+ExecStart=/bin/sh /lib/rdk/log_suppress_test_generator.sh /rdklogs/logs/log_suppress_test.txt
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
