@@ -186,11 +186,20 @@ RDK_LOGGER_PREFIXES=""
 build_rdk_logger_prefix_cache() {
     local prefixes=""
 
-    # Source 1: Parse /etc/log4crc for appender prefix= attributes
+    # Source 1: Parse log4crc for appender prefix= attributes
     # This is the authoritative source — lists all rdk_logger file destinations
+    # Check both /etc/log4crc (deployed by rdkb_log4crc from meta-rdk-broadband)
+    # and /rdklogger/log4crc as fallback
+    local log4crc_file=""
     if [ -f /etc/log4crc ]; then
+        log4crc_file="/etc/log4crc"
+    elif [ -f /rdklogger/log4crc ]; then
+        log4crc_file="/rdklogger/log4crc"
+    fi
+    if [ -n "$log4crc_file" ]; then
         local log4crc_prefixes
-        log4crc_prefixes=$(grep -o 'prefix="[^"]*"' /etc/log4crc 2>/dev/null | sed 's/prefix="//;s/"//' | sort -u)
+        # Use sed instead of grep -o for BusyBox compatibility
+        log4crc_prefixes=$(sed -n 's/.*prefix="\([^"]*\)".*/\1/p' "$log4crc_file" 2>/dev/null | sort -u)
         if [ -n "$log4crc_prefixes" ]; then
             prefixes="$log4crc_prefixes"
         fi

@@ -1,11 +1,9 @@
 #!/bin/sh
 ##########################################################################
 # log_suppress_test_generator.sh
-# Generates sporadic, periodic, and burst-flood log patterns for
-# verifying log_suppress.sh behavior on device.
-# Installed with sysint-broadband; runs independently, no dependencies.
+# Generates flooded log lines to verify log_suppress.sh behavior.
+# No dependencies. Runs indefinitely until killed.
 # Usage: sh log_suppress_test_generator.sh [output_log_file]
-# Runs indefinitely until killed.
 ##########################################################################
 
 LOG_FILE="${1:-/rdklogs/logs/log_suppress_test.txt}"
@@ -18,117 +16,60 @@ timestamp() {
     date '+%y%m%d-%H:%M:%S'
 }
 
-# Sporadic: unique lines at random intervals (should NOT be suppressed)
-sporadic_log() {
-    CYCLE=$((CYCLE + 1))
-    echo "$(timestamp) [SPORADIC] Unique event #${CYCLE} pid=$$ uptime=$(cut -d' ' -f1 /proc/uptime 2>/dev/null)" >> "$LOG_FILE"
-}
-
-# Periodic: same format but unique data each time (should NOT be suppressed)
-periodic_log() {
-    echo "$(timestamp) [PERIODIC] Health check OK - memory_free=$(awk '/MemFree/{print $2}' /proc/meminfo 2>/dev/null)kB" >> "$LOG_FILE"
-}
-
-# Burst flood: identical lines rapidly repeated (SHOULD be suppressed)
-burst_flood() {
-    COUNT="${1:-20}"
-    MSG="$(timestamp) [BURST] REPEATED: Connection retry failed, endpoint unreachable"
-    i=0
-    while [ "$i" -lt "$COUNT" ]; do
-        echo "$MSG" >> "$LOG_FILE"
-        i=$((i + 1))
-    done
-    echo "$(timestamp) [BURST] Flood of $COUNT identical lines complete" >> "$LOG_FILE"
-}
-
-# Mixed burst: two different repeated messages back-to-back (tests pattern boundary)
-mixed_burst() {
-    i=0
-    while [ "$i" -lt 8 ]; do
-        echo "$(timestamp) [MIXED] WARNING: DNS lookup timeout for host xconf.xcal.tv" >> "$LOG_FILE"
-        i=$((i + 1))
-    done
-    i=0
-    while [ "$i" -lt 12 ]; do
-        echo "$(timestamp) [MIXED] ERROR: CURL returned code 28 - operation timed out" >> "$LOG_FILE"
-        i=$((i + 1))
-    done
-}
-
-# Graduated burst: increasing run lengths to test suppression threshold
-graduated_burst() {
-    # 2 identical lines (below threshold - should NOT suppress)
-    echo "$(timestamp) [GRAD] Level-2 repeat A" >> "$LOG_FILE"
-    echo "$(timestamp) [GRAD] Level-2 repeat A" >> "$LOG_FILE"
-
-    # 3 identical lines (at threshold - should suppress 1)
-    echo "$(timestamp) [GRAD] Level-3 repeat B" >> "$LOG_FILE"
-    echo "$(timestamp) [GRAD] Level-3 repeat B" >> "$LOG_FILE"
-    echo "$(timestamp) [GRAD] Level-3 repeat B" >> "$LOG_FILE"
-
-    # 5 identical lines (should suppress 3)
-    j=0
-    while [ "$j" -lt 5 ]; do
-        echo "$(timestamp) [GRAD] Level-5 repeat C" >> "$LOG_FILE"
-        j=$((j + 1))
-    done
-
-    # 50 identical lines (should suppress 48)
-    j=0
-    while [ "$j" -lt 50 ]; do
-        echo "$(timestamp) [GRAD] Level-50 repeat D" >> "$LOG_FILE"
-        j=$((j + 1))
-    done
-}
-
-# Interleaved: repeated lines with unique lines mixed in (should NOT suppress)
-interleaved_log() {
-    i=0
-    while [ "$i" -lt 6 ]; do
-        echo "$(timestamp) [INTERLEAVE] Retry attempt" >> "$LOG_FILE"
-        echo "$(timestamp) [INTERLEAVE] Unique marker $i cycle=$CYCLE" >> "$LOG_FILE"
-        i=$((i + 1))
-    done
-}
-
 cleanup() {
-    echo "$(timestamp) [GENERATOR] Shutting down after $CYCLE cycles, pid=$$" >> "$LOG_FILE"
+    echo "$(timestamp) LOG_SUPPRESS_TEST: Generator stopped after $CYCLE cycles pid=$$" >> "$LOG_FILE"
     exit 0
 }
 
 trap cleanup INT TERM
 
-echo "$(timestamp) [GENERATOR] Started pid=$$ output=$LOG_FILE" >> "$LOG_FILE"
+echo "$(timestamp) LOG_SUPPRESS_TEST: Generator started pid=$$ output=$LOG_FILE" >> "$LOG_FILE"
 
-# Main loop
 while true; do
-    # Periodic: every cycle (10s)
-    periodic_log
+    TS=$(timestamp)
 
-    # Sporadic: ~30% chance each cycle
-    RAND=$(( $(date +%S) * $$ % 100 ))
-    if [ "$RAND" -lt 30 ]; then
-        sporadic_log
-    fi
+    # Unique lines (should never be suppressed)
+    echo "$TS CcspWifiSsp: RDKB_CONNECTED_CLIENTS: Client connected MAC=AA:BB:CC:DD:EE:$((CYCLE % 100)) RSSI=-$((40 + CYCLE % 30))" >> "$LOG_FILE"
+    echo "$TS PAM: mem_free=$(awk '/MemFree/{print $2}' /proc/meminfo 2>/dev/null)kB cpu_load=$(cut -d' ' -f1 /proc/loadavg 2>/dev/null)" >> "$LOG_FILE"
 
-    # Burst flood (25 lines): every 6th cycle (~60s)
-    if [ $((CYCLE % 6)) -eq 0 ] && [ "$CYCLE" -gt 0 ]; then
-        burst_flood 25
-    fi
+    # Flood: 30 identical lines (should be suppressed to 2 + marker)
+    i=0
+    while [ "$i" -lt 30 ]; do
+        echo "$TS CcspTr069Pa: CURL failed with error 28: Connection timed out after 30000 milliseconds" >> "$LOG_FILE"
+        i=$((i + 1))
+    done
 
-    # Mixed burst: every 10th cycle (~100s)
-    if [ $((CYCLE % 10)) -eq 0 ] && [ "$CYCLE" -gt 0 ]; then
-        mixed_burst
-    fi
+    # Another flood: 15 identical lines
+    i=0
+    while [ "$i" -lt 15 ]; do
+        echo "$TS CcspCMAgentSsp: DOCSIS CM STATUS: Downstream channel lock failed - no signal" >> "$LOG_FILE"
+        i=$((i + 1))
+    done
 
-    # Graduated burst: every 15th cycle (~150s)
-    if [ $((CYCLE % 15)) -eq 0 ] && [ "$CYCLE" -gt 0 ]; then
-        graduated_burst
-    fi
+    # 2 identical lines (below threshold - should NOT be suppressed)
+    echo "$TS webpa: Ping to parodus failed, retrying" >> "$LOG_FILE"
+    echo "$TS webpa: Ping to parodus failed, retrying" >> "$LOG_FILE"
 
-    # Interleaved (no suppression expected): every 12th cycle (~120s)
-    if [ $((CYCLE % 12)) -eq 0 ] && [ "$CYCLE" -gt 0 ]; then
-        interleaved_log
+    # 3 identical lines (exactly at threshold)
+    echo "$TS PSM: Saving config to persistent storage" >> "$LOG_FILE"
+    echo "$TS PSM: Saving config to persistent storage" >> "$LOG_FILE"
+    echo "$TS PSM: Saving config to persistent storage" >> "$LOG_FILE"
+
+    # Alternating lines (same message broken by unique - should NOT suppress)
+    i=0
+    while [ "$i" -lt 5 ]; do
+        echo "$TS XDNS: DNS query timeout for host telemetry.xfinity.com" >> "$LOG_FILE"
+        echo "$TS XDNS: Resolved telemetry.xfinity.com -> 96.118.$((i + CYCLE % 50)).$((CYCLE % 255))" >> "$LOG_FILE"
+        i=$((i + 1))
+    done
+
+    # Large flood: 100 identical lines every 5th cycle
+    if [ $((CYCLE % 5)) -eq 0 ] && [ "$CYCLE" -gt 0 ]; then
+        i=0
+        while [ "$i" -lt 100 ]; do
+            echo "$TS CcspMoCA: MoCA link down - no peers detected on network" >> "$LOG_FILE"
+            i=$((i + 1))
+        done
     fi
 
     CYCLE=$((CYCLE + 1))

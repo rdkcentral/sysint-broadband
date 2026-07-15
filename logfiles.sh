@@ -435,6 +435,12 @@ syncLogs_nvram2()
         echo "[$TIMESTAMP] WARN: log_suppress.sh not found at $RDK_LOGGER_PATH/log_suppress.sh" >> "$LOG_SUPPRESS_STATS_LOG"
     fi
 
+    # Log the expected tar filename for this sync cycle
+    SYNC_TAR_NAME="${MAC}_Logs_$(date '+%m-%d-%y-%I-%M%p').tgz"
+    size_after_suppress=`du -sk "$LOG_SYNC_PATH" 2>/dev/null | awk '{print $1}'`
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] SYNC_CYCLE tar=$SYNC_TAR_NAME nvram2_size=${size_after_suppress}KB" >> "$LOG_SUPPRESS_STATS_LOG"
+    echo_t "SYNC_CYCLE: Expected tar=$SYNC_TAR_NAME nvram2_size=${size_after_suppress}KB"
+
     if [ -f /tmp/backup_onboardlogs ]; then
         backup_onboarding_logs
     fi
