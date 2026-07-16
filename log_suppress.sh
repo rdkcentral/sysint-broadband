@@ -280,255 +280,14 @@ set_offset() {
     echo "$value" > "$offset_file"
 }
 
-# ------------------------------------------------------------
-# Per-Process CPU Overhead Monitoring Functions
-# ------------------------------------------------------------
-
-# Log file for CPU overhead reports
-CPU_OVERHEAD_LOG="/rdklogs/logs/log_suppress_cpu_overhead.txt"
-
 # Dedicated log file for suppression statistics
 LOG_SUPPRESS_STATS_LOG="/rdklogs/logs/log_suppress_stats.txt"
-
-# Log function that writes to both stdout and dedicated log file
-log_cpu_overhead() {
-    local msg="$1"
-    echo_t "$msg"
-    echo "[`date '+%Y-%m-%d %H:%M:%S'`] $msg" >> "$CPU_OVERHEAD_LOG" 2>/dev/null
-}
 
 # Log function for suppression statistics - writes to dedicated stats file
 log_suppress_stats() {
     local msg="$1"
     echo_t "$msg"
     echo "[`date '+%Y-%m-%d %H:%M:%S'`] $msg" >> "$LOG_SUPPRESS_STATS_LOG" 2>/dev/null
-}
-
-# Log size tracking entry
-log_size_tracking() {
-    local stage="$1"
-    local dir="$2"
-    local size_kb="$3"
-    local timestamp=`date '+%Y-%m-%d %H:%M:%S'`
-    
-    # Log to stats file
-    echo "[$timestamp] SIZE_TRACK [$stage] $dir Size=${size_kb}KB" >> "$LOG_SUPPRESS_STATS_LOG" 2>/dev/null
-    echo_t "SIZE_TRACK [${stage}]: ${dir} = ${size_kb} KB"
-}
-
-# Get process CPU time from /proc/PID/stat (utime + stime in jiffies)
-# Works on all Linux including BusyBox
-get_proc_cpu_time() {
-    local pid="${1:-self}"
-    if [ -f "/proc/$pid/stat" ]; then
-        awk '{print $14+$15}' "/proc/$pid/stat" 2>/dev/null || echo 0
-    else
-        echo 0
-    fi
-}
-
-# Get system uptime in jiffies (centiseconds)
-get_system_uptime_jiffies() {
-    if [ -f /proc/uptime ]; then
-        # /proc/uptime gives seconds with decimals, convert to centiseconds (jiffies at 100Hz)
-        awk '{printf "%.0f", $1 * 100}' /proc/uptime 2>/dev/null || echo 0
-    else
-        echo 0
-    fi
-}
-
-# Get process memory usage in KB from /proc/PID/status
-# Works on all Linux including BusyBox
-get_process_mem_kb() {
-    local pid="$1"
-    local mem_kb=0
-    
-    if [ -n "$pid" ] && [ -f "/proc/$pid/status" ]; then
-        # VmRSS is the resident set size (actual memory used)
-        mem_kb=$(grep -i "^VmRSS:" "/proc/$pid/status" 2>/dev/null | awk '{print $2}')
-        [ -z "$mem_kb" ] && mem_kb=0
-        echo "$mem_kb" | grep -qE '^[0-9]+$' || mem_kb=0
-    fi
-    echo "$mem_kb"
-}
-
-# Get total system memory in KB
-get_total_mem_kb() {
-    local total_kb=0
-    if [ -f /proc/meminfo ]; then
-        total_kb=$(grep -i "^MemTotal:" /proc/meminfo 2>/dev/null | awk '{print $2}')
-        [ -z "$total_kb" ] && total_kb=1
-    fi
-    echo "$total_kb"
-}
-
-# Get process memory usage as percentage
-get_process_mem_usage() {
-    local pid="$1"
-    local mem_pct=0
-    local proc_mem=$(get_process_mem_kb "$pid")
-    local total_mem=$(get_total_mem_kb)
-    
-    if [ "$total_mem" -gt 0 ] 2>/dev/null && [ "$proc_mem" -gt 0 ] 2>/dev/null; then
-        mem_pct=$((proc_mem * 100 / total_mem))
-    fi
-    echo "$mem_pct"
-}
-
-# Get process command name from /proc/PID/comm or /proc/PID/cmdline
-# Works on all Linux including BusyBox
-get_process_cmd() {
-    local pid="$1"
-    local cmd=""
-    
-    if [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
-        # Try /proc/PID/comm first (cleaner, single word)
-        if [ -f "/proc/$pid/comm" ]; then
-            cmd=$(cat "/proc/$pid/comm" 2>/dev/null | tr -d '\n')
-        fi
-        # Fallback to cmdline if comm is empty
-        if [ -z "$cmd" ] && [ -f "/proc/$pid/cmdline" ]; then
-            cmd=$(cat "/proc/$pid/cmdline" 2>/dev/null | tr '\0' ' ' | awk '{print $1}')
-            cmd=$(basename "$cmd" 2>/dev/null)
-        fi
-        [ -z "$cmd" ] && cmd="sh"
-    fi
-    echo "$cmd"
-}
-
-# Initialize per-process CPU monitoring
-init_cpu_monitor() {
-    log_cpu_overhead ""
-    log_cpu_overhead "╔════════════════════════════════════════════════════════════╗"
-    log_cpu_overhead "║  PER-PROCESS CPU MONITORING STARTED                        ║"
-    log_cpu_overhead "╚════════════════════════════════════════════════════════════╝"
-    
-    CPU_MON_START_SEC=$(date +%s)
-    CPU_MON_START_PROC=$(get_proc_cpu_time $$)
-    CPU_MON_START_UPTIME=$(get_system_uptime_jiffies)
-    CPU_MON_PID=$$
-    CPU_MON_SAMPLES=0
-    CPU_MON_SUM=0
-    CPU_MON_PEAK=0
-    CPU_MON_MEM_PEAK=0
-    CPU_MON_LAST_PROC=$(get_proc_cpu_time $$)
-    CPU_MON_LAST_UPTIME=$(get_system_uptime_jiffies)
-    
-    # Initial snapshot
-    local init_mem_kb=$(get_process_mem_kb $CPU_MON_PID)
-    local init_mem_pct=$(get_process_mem_usage $CPU_MON_PID)
-    local proc_cmd=$(get_process_cmd $CPU_MON_PID)
-    
-    log_cpu_overhead "[INIT] PID: $CPU_MON_PID ($proc_cmd) | Initial Mem: ${init_mem_kb}KB (${init_mem_pct}%)"
-}
-
-# Sample per-process CPU during execution using /proc filesystem
-# Calculates instantaneous CPU% based on jiffies delta since last sample
-sample_cpu() {
-    local current_proc=$(get_proc_cpu_time $CPU_MON_PID)
-    local current_uptime=$(get_system_uptime_jiffies)
-    
-    # Calculate delta since last sample
-    local proc_delta=$((current_proc - CPU_MON_LAST_PROC))
-    local uptime_delta=$((current_uptime - CPU_MON_LAST_UPTIME))
-    
-    # Calculate instantaneous CPU% (process jiffies / elapsed jiffies * 100)
-    local cpu_pct=0
-    if [ "$uptime_delta" -gt 0 ] 2>/dev/null; then
-        cpu_pct=$((proc_delta * 100 / uptime_delta))
-    fi
-    
-    # Get current memory
-    local mem_kb=$(get_process_mem_kb $CPU_MON_PID)
-    local mem_pct=$(get_process_mem_usage $CPU_MON_PID)
-    
-    # Update tracking
-    CPU_MON_SUM=$((CPU_MON_SUM + cpu_pct))
-    CPU_MON_SAMPLES=$((CPU_MON_SAMPLES + 1))
-    [ "$cpu_pct" -gt "$CPU_MON_PEAK" ] && CPU_MON_PEAK=$cpu_pct
-    [ "$mem_kb" -gt "$CPU_MON_MEM_PEAK" ] && CPU_MON_MEM_PEAK=$mem_kb
-    
-    # Update last values for next sample
-    CPU_MON_LAST_PROC=$current_proc
-    CPU_MON_LAST_UPTIME=$current_uptime
-}
-
-# Report per-process CPU overhead statistics
-report_cpu_overhead() {
-    local end_sec=$(date +%s)
-    local end_proc=$(get_proc_cpu_time $$)
-    local end_uptime=$(get_system_uptime_jiffies)
-    
-    # Elapsed wall-clock time
-    local elapsed=$((end_sec - CPU_MON_START_SEC))
-    [ "$elapsed" -eq 0 ] && elapsed=1
-    
-    # Process-specific CPU time (jiffies to ms, assuming 100Hz)
-    local proc_jiffies=$((end_proc - CPU_MON_START_PROC))
-    local proc_ms=$((proc_jiffies * 10))
-    
-    # Calculate CPU overhead percentage using jiffies delta
-    # This is more accurate: (process_jiffies / elapsed_jiffies) * 100
-    local uptime_jiffies=$((end_uptime - CPU_MON_START_UPTIME))
-    local cpu_overhead_pct=0
-    if [ "$uptime_jiffies" -gt 0 ] 2>/dev/null; then
-        cpu_overhead_pct=$((proc_jiffies * 100 / uptime_jiffies))
-    fi
-    
-    # Average CPU from samples
-    local avg_cpu=0
-    if [ "$CPU_MON_SAMPLES" -gt 0 ]; then
-        avg_cpu=$((CPU_MON_SUM / CPU_MON_SAMPLES))
-    fi
-    
-    # Final memory snapshot
-    local final_mem_kb=$(get_process_mem_kb $CPU_MON_PID)
-    local final_mem_pct=$(get_process_mem_usage $CPU_MON_PID)
-    local peak_mem_pct=0
-    local total_mem=$(get_total_mem_kb)
-    if [ "$total_mem" -gt 0 ] 2>/dev/null && [ "$CPU_MON_MEM_PEAK" -gt 0 ] 2>/dev/null; then
-        peak_mem_pct=$((CPU_MON_MEM_PEAK * 100 / total_mem))
-    fi
-    
-    log_cpu_overhead ""
-    log_cpu_overhead "╔════════════════════════════════════════════════════════════════════╗"
-    log_cpu_overhead "║       LOG SUPPRESSION PER-PROCESS CPU OVERHEAD REPORT              ║"
-    log_cpu_overhead "╠════════════════════════════════════════════════════════════════════╣"
-    log_cpu_overhead "║  PROCESS IDENTIFICATION:                                           "
-    log_cpu_overhead "║    PID: $CPU_MON_PID                                               "
-    log_cpu_overhead "║    Command: $(get_process_cmd $CPU_MON_PID)                        "
-    log_cpu_overhead "╠════════════════════════════════════════════════════════════════════╣"
-    log_cpu_overhead "║  CONFIGURATION:                                                    "
-    log_cpu_overhead "║    Log Suppression Enabled: $LOG_SUPPRESS_ENABLED                  "
-    log_cpu_overhead "║    Pattern Length: $MAX_PATTERN_LENGTH                             "
-    log_cpu_overhead "╠════════════════════════════════════════════════════════════════════╣"
-    log_cpu_overhead "║  TIMING:                                                           "
-    log_cpu_overhead "║    Duration: ${elapsed} seconds                                    "
-    log_cpu_overhead "║    Process CPU time: ${proc_ms} ms (${proc_jiffies} jiffies)       "
-    log_cpu_overhead "╠════════════════════════════════════════════════════════════════════╣"
-    log_cpu_overhead "║  PER-PROCESS CPU USAGE:                                            "
-    log_cpu_overhead "║    CPU Overhead: ${cpu_overhead_pct}%                              "
-    log_cpu_overhead "║    Peak CPU (sampled): ${CPU_MON_PEAK}%                            "
-    log_cpu_overhead "║    Average CPU (sampled): ${avg_cpu}%                              "
-    log_cpu_overhead "║    Samples collected: ${CPU_MON_SAMPLES}                           "
-    log_cpu_overhead "╠════════════════════════════════════════════════════════════════════╣"
-    log_cpu_overhead "║  PER-PROCESS MEMORY USAGE:                                         "
-    log_cpu_overhead "║    Peak Memory: ${CPU_MON_MEM_PEAK} KB (${peak_mem_pct}%)          "
-    log_cpu_overhead "║    Final Memory: ${final_mem_kb} KB (${final_mem_pct}%)            "
-    log_cpu_overhead "╠════════════════════════════════════════════════════════════════════╣"
-    
-    # Overhead assessment based on per-process readings
-    if [ "$cpu_overhead_pct" -gt 30 ] || [ "$CPU_MON_PEAK" -gt 50 ]; then
-        log_cpu_overhead "║  ⚠ WARNING: Significant process CPU overhead detected!            "
-        log_cpu_overhead "║    Recommendation: Consider running with 'nice -n 19'             "
-    elif [ "$cpu_overhead_pct" -gt 15 ] || [ "$CPU_MON_PEAK" -gt 25 ]; then
-        log_cpu_overhead "║  ⚡ MODERATE: Some process CPU overhead observed                   "
-    else
-        log_cpu_overhead "║  ✓ LOW: Minimal process CPU impact                                 "
-    fi
-    
-    log_cpu_overhead "╚════════════════════════════════════════════════════════════════════╝"
-    log_cpu_overhead "Logs saved to: $CPU_OVERHEAD_LOG"
 }
 
 # Function to suppress logs in a single file (or a stream of new lines)
@@ -1204,23 +963,6 @@ suppress_logs_in_directory() {
     touch /tmp/.log_suppress_input_count /tmp/.log_suppress_output_count /tmp/.log_suppress_per_file
     TOTAL_SKIPPED_FILES=0
     
-    # Log suppression session start
-    log_suppress_stats "========================================================"
-    log_suppress_stats "LOG SUPPRESSION SESSION STARTED"
-    log_suppress_stats "========================================================"
-    log_suppress_stats "Input directory: $dir"
-    log_suppress_stats "Output directory: $outdir"
-    log_suppress_stats "Log Suppression Enabled: $LOG_SUPPRESS_ENABLED"
-    log_suppress_stats "Pattern Length: $MAX_PATTERN_LENGTH"
-    if [ "$LOG_SUPPRESS_IN_PLACE" -eq 1 ]; then
-        log_suppress_stats "Mode: In-place"
-    else
-        log_suppress_stats "Mode: Separate output"
-    fi
-    
-    # Start CPU monitoring
-    init_cpu_monitor
-    
     # Cleanup: remove any stale offset directory inside the logs directory
     # Offsets are stored at /nvram2/.log_suppress_offsets (outside logs dir)
     # so they are NOT included in tar/upload to cloud
@@ -1239,9 +981,6 @@ suppress_logs_in_directory() {
     
     size_before=$((total_dir_before - offset_size_before))
     [ "$size_before" -lt 0 ] 2>/dev/null && size_before=0
-    
-    # Log size at sync stage
-    log_size_tracking "AFTER_SYNC_BEFORE_SUPPRESS" "$dir" "$size_before"
     
     # Count total files
     for file in "$dir"/*; do
@@ -1302,9 +1041,6 @@ suppress_logs_in_directory() {
         suppress_log_file_incremental "$file" "$OUT_FILE" "$OFFSET_FILE" "$LOG_SUPPRESS_IN_PLACE"
         
         processed=$((processed + 1))
-        
-        # Sample CPU every 3 files
-        [ $((processed % 3)) -eq 0 ] && sample_cpu
     done
     
     # Calculate total size after suppression, excluding the offset tracking directory
@@ -1323,9 +1059,6 @@ suppress_logs_in_directory() {
     if [ "$size_after" -lt 0 ] 2>/dev/null; then
         size_after=0
     fi
-    
-    # Log size AFTER suppression (ready for cloud upload)
-    log_size_tracking "AFTER_SUPPRESS_READY_FOR_UPLOAD" "$dir" "$size_after"
     
     # Calculate size reduction
     local size_saved=$((size_before - size_after))
@@ -1353,56 +1086,33 @@ suppress_logs_in_directory() {
     # Files with new content vs skipped (already up-to-date)
     local files_with_new_content=$((processed - TOTAL_SKIPPED_FILES))
     
-    # Log comprehensive statistics to dedicated file
-    log_suppress_stats "--------------------------------------------------------"
-    log_suppress_stats "PER-FILE SUPPRESSION:"
-    log_suppress_stats "--------------------------------------------------------"
-    log_suppress_stats "  File                          | Lines In | Lines Out | Saved | %"
-    log_suppress_stats "  ------------------------------|----------|-----------|-------|---"
+    # Get original size from /rdklogs/logs/
+    local rdklogs_size=`du -sk "$LOG_PATH" 2>/dev/null | awk '{print $1}'`
+    [ -z "$rdklogs_size" ] && rdklogs_size=0
+    
+    # Log stats to single file
+    log_suppress_stats "========================================================"
+    log_suppress_stats "Original size (rdklogs/logs): ${rdklogs_size}KB"
+    log_suppress_stats "No of files synced: $total"
+    log_suppress_stats "No of non-RDK log files: $processed"
+    log_suppress_stats "Size in nvram2/logs (before suppress): ${size_before}KB"
+    log_suppress_stats "Files processed:"
     if [ -s /tmp/.log_suppress_per_file ]; then
+        log_suppress_stats "  File                          | Lines In | Lines Out | Saved | %"
+        log_suppress_stats "  ------------------------------|----------|-----------|-------|---"
         while IFS='|' read -r fname fin fout fsaved fpct; do
             log_suppress_stats "  $(printf '%-30s' "$fname")| $(printf '%8s' "$fin") | $(printf '%9s' "$fout") | $(printf '%5s' "$fsaved") | ${fpct}%"
         done < /tmp/.log_suppress_per_file
     fi
-    log_suppress_stats "--------------------------------------------------------"
-    log_suppress_stats "SUPPRESSION RESULTS:"
-    log_suppress_stats "--------------------------------------------------------"
-    log_suppress_stats "  Total files in directory: $total"
-    log_suppress_stats "  Non-RDK files processed: $processed"
-    log_suppress_stats "  RDK logger files skipped: $skipped_rdk"
-    log_suppress_stats "  Files with new content: $files_with_new_content"
-    log_suppress_stats "  Files already up-to-date: $TOTAL_SKIPPED_FILES"
-    log_suppress_stats "--------------------------------------------------------"
-    log_suppress_stats "SIZE TRACKING:"
-    log_suppress_stats "  Size after sync (before suppression): ${size_before} KB"
-    log_suppress_stats "  Size after suppression (for upload):  ${size_after} KB"
-    log_suppress_stats "  Size saved: ${size_saved} KB (${size_reduction_pct}% reduction)"
-    log_suppress_stats "--------------------------------------------------------"
-    log_suppress_stats "LINE TRACKING:"
-    log_suppress_stats "  Lines input:  $TOTAL_INPUT_LINES"
-    log_suppress_stats "  Lines output: $TOTAL_OUTPUT_LINES"
-    log_suppress_stats "  Lines saved:  $lines_saved (${line_reduction_pct}% reduction)"
-    log_suppress_stats "--------------------------------------------------------"
-    log_suppress_stats "CONFIGURATION:"
-    log_suppress_stats "  Log Suppression Enabled: $LOG_SUPPRESS_ENABLED"
-    log_suppress_stats "  Pattern Length: $MAX_PATTERN_LENGTH"
-    log_suppress_stats "--------------------------------------------------------"
-    log_suppress_stats "LOG SUPPRESSION SESSION ENDED"
+    log_suppress_stats "Size in nvram2/logs (after suppress): ${size_after}KB"
+    log_suppress_stats "Size saved: ${size_saved}KB (${size_reduction_pct}%)"
     log_suppress_stats "========================================================"
-    log_suppress_stats ""
     
-    # Also print summary to console
-    echo_t "Log suppression completed: Processed $processed non-RDK files, skipped $skipped_rdk RDK logger files"
-    echo_t "  Files with new content: $files_with_new_content, Already up-to-date: $TOTAL_SKIPPED_FILES"
-    echo_t "SIZE: Before=${size_before}KB -> After=${size_after}KB (saved ${size_saved}KB, ${size_reduction_pct}%)"
-    echo_t "LINES: ${TOTAL_INPUT_LINES} input -> ${TOTAL_OUTPUT_LINES} output (saved ${lines_saved}, ${line_reduction_pct}%)"
-    echo_t "Stats logged to: $LOG_SUPPRESS_STATS_LOG"
+    echo_t "Log suppression completed: $processed non-RDK files processed, $skipped_rdk RDK files skipped"
+    echo_t "SIZE: rdklogs=${rdklogs_size}KB nvram2_before=${size_before}KB nvram2_after=${size_after}KB saved=${size_saved}KB (${size_reduction_pct}%)"
     
     # Cleanup temp files
     rm -f /tmp/.log_suppress_input_count /tmp/.log_suppress_output_count /tmp/.log_suppress_per_file
-    
-    # Report CPU overhead
-    report_cpu_overhead
 }
 
 # Execute suppression

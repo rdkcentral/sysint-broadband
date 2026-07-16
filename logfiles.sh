@@ -435,12 +435,6 @@ syncLogs_nvram2()
         echo "[$TIMESTAMP] WARN: log_suppress.sh not found at $RDK_LOGGER_PATH/log_suppress.sh" >> "$LOG_SUPPRESS_STATS_LOG"
     fi
 
-    # Log the expected tar filename for this sync cycle
-    SYNC_TAR_NAME="${MAC}_Logs_$(date '+%m-%d-%y-%I-%M%p').tgz"
-    size_after_suppress=`du -sk "$LOG_SYNC_PATH" 2>/dev/null | awk '{print $1}'`
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] SYNC_CYCLE tar=$SYNC_TAR_NAME nvram2_size=${size_after_suppress}KB" >> "$LOG_SUPPRESS_STATS_LOG"
-    echo_t "SYNC_CYCLE: Expected tar=$SYNC_TAR_NAME nvram2_size=${size_after_suppress}KB"
-
     if [ -f /tmp/backup_onboardlogs ]; then
         backup_onboarding_logs
     fi
@@ -716,12 +710,12 @@ backupnvram2logs()
 	            tar -X $PATTERN_FILE -cvzf $MAC"_Logs_$dt.tgz" $LOG_SYNC_PATH
 	            TAR_FILE="$MAC"_Logs_$dt.tgz""
 	        fi
-	        # Log tar file size after suppression
+	        # Log tar file name and size to suppression stats
 	        if [ -f "$TAR_FILE" ]; then
 	            TAR_SIZE_BYTES=`ls -l "$TAR_FILE" | awk '{print $5}'`
 	            TAR_SIZE_KB=$((TAR_SIZE_BYTES / 1024))
-	            echo "[`date '+%Y-%m-%d %H:%M:%S'`] SIZE_TRACK [TAR_AFTER_SUPPRESS] File=$TAR_FILE Size=${TAR_SIZE_KB}KB (${TAR_SIZE_BYTES} bytes)" >> /rdklogs/logs/log_suppress_stats.txt
-	            echo_t "RDK_LOGGER: Tar file size after suppression: ${TAR_SIZE_KB}KB ($TAR_FILE)"
+	            echo "[`date '+%Y-%m-%d %H:%M:%S'`] Tar file: $TAR_FILE Size: ${TAR_SIZE_KB}KB (${TAR_SIZE_BYTES} bytes)" >> /rdklogs/logs/log_suppress_stats.txt
+	            echo_t "RDK_LOGGER: Tar file: $TAR_FILE Size: ${TAR_SIZE_KB}KB"
 	        fi
         fi
 
@@ -747,9 +741,9 @@ backupnvram2logs()
 
 	for fname in $FILES
 	do
-		# Skip truncating the log suppression stats files - they need to persist
+		# Skip truncating the log suppression stats file - it needs to persist
 		case "$fname" in
-			log_suppress_stats.txt|log_suppress_cpu_overhead.txt)
+			log_suppress_stats.txt)
 				continue
 				;;
 		esac

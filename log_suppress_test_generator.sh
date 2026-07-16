@@ -1,16 +1,15 @@
 #!/bin/sh
 ##########################################################################
 # log_suppress_test_generator.sh
-# Generates flooded log lines to verify log_suppress.sh behavior.
+# Floods an existing log file with repeated lines to verify
+# log_suppress.sh behavior on device.
 # No dependencies. Runs indefinitely until killed.
-# Usage: sh log_suppress_test_generator.sh [output_log_file]
+# Usage: sh log_suppress_test_generator.sh [log_file]
+# Default: /rdklogs/logs/agent.txt
 ##########################################################################
 
-LOG_FILE="${1:-/rdklogs/logs/log_suppress_test.txt}"
+LOG_FILE="${1:-/rdklogs/logs/agent.txt}"
 CYCLE=0
-
-LOG_DIR=$(dirname "$LOG_FILE")
-mkdir -p "$LOG_DIR" 2>/dev/null
 
 timestamp() {
     date '+%y%m%d-%H:%M:%S'
@@ -23,14 +22,13 @@ cleanup() {
 
 trap cleanup INT TERM
 
-echo "$(timestamp) LOG_SUPPRESS_TEST: Generator started pid=$$ output=$LOG_FILE" >> "$LOG_FILE"
+echo "$(timestamp) LOG_SUPPRESS_TEST: Generator started pid=$$ target=$LOG_FILE" >> "$LOG_FILE"
 
 while true; do
     TS=$(timestamp)
 
     # Unique lines (should never be suppressed)
     echo "$TS CcspWifiSsp: RDKB_CONNECTED_CLIENTS: Client connected MAC=AA:BB:CC:DD:EE:$((CYCLE % 100)) RSSI=-$((40 + CYCLE % 30))" >> "$LOG_FILE"
-    echo "$TS PAM: mem_free=$(awk '/MemFree/{print $2}' /proc/meminfo 2>/dev/null)kB cpu_load=$(cut -d' ' -f1 /proc/loadavg 2>/dev/null)" >> "$LOG_FILE"
 
     # Flood: 30 identical lines (should be suppressed to 2 + marker)
     i=0
@@ -55,9 +53,18 @@ while true; do
     echo "$TS PSM: Saving config to persistent storage" >> "$LOG_FILE"
     echo "$TS PSM: Saving config to persistent storage" >> "$LOG_FILE"
 
-    # Alternating lines (same message broken by unique - should NOT suppress)
-    i=0
-    while [ "$i" -lt 5 ]; do
+    # Large flood: 100 identical lines every 5th cycle
+    if [ $((CYCLE % 5)) -eq 0 ] && [ "$CYCLE" -gt 0 ]; then
+        i=0
+        while [ "$i" -lt 100 ]; do
+            echo "$TS CcspMoCA: MoCA link down - no peers detected on network" >> "$LOG_FILE"
+            i=$((i + 1))
+        done
+    fi
+
+    CYCLE=$((CYCLE + 1))
+    sleep 10
+done
         echo "$TS XDNS: DNS query timeout for host telemetry.xfinity.com" >> "$LOG_FILE"
         echo "$TS XDNS: Resolved telemetry.xfinity.com -> 96.118.$((i + CYCLE % 50)).$((CYCLE % 255))" >> "$LOG_FILE"
         i=$((i + 1))
