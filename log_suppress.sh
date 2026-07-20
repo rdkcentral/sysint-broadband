@@ -490,6 +490,16 @@ BEGIN { idx = 0 }
     # --- Timestamp format detection (14 formats supported) ---
     if      (match($0, /^[0-9]{6}-[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6} /))
         { timestamp = substr($0,1,RLENGTH); message = substr($0,RLENGTH+1) }
+    # ISO 8601 with 'T' separator (rdk_logger style): YYYY-MM-DDTHH:MM:SS[.frac][Z]
+    else if (match($0, /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]+Z? /) ||
+             match($0, /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z? /))
+        { timestamp = substr($0,1,RLENGTH); message = substr($0,RLENGTH+1) }
+    # Space-separated date-time: YYYY-MM-DD HH:MM:SS[.frac]  (must precede the
+    # generic numeric-dash pattern below, which would otherwise capture only the
+    # date and leave the time inside the message, breaking repetition matching)
+    else if (match($0, /^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]+ /) ||
+             match($0, /^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} /))
+        { timestamp = substr($0,1,RLENGTH); message = substr($0,RLENGTH+1) }
     else if (match($0, /^[0-9-]+-[0-9:.]+ /))
         { timestamp = substr($0,1,RLENGTH); message = substr($0,RLENGTH+1) }
     else if (match($0, /^[0-9]{4} [A-Za-z]{3} [0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} /))
@@ -513,6 +523,15 @@ BEGIN { idx = 0 }
     else if (match($0, /^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6} /))
         { timestamp = substr($0,1,RLENGTH); message = substr($0,RLENGTH+1) }
     else if (match($0, /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z[[:space:]]*:/))
+        { timestamp = substr($0,1,RLENGTH); message = substr($0,RLENGTH+1) }
+    # Bracketed ISO date-time: [YYYY-MM-DD HH:MM:SS]  (e.g. rdk_shell.log)
+    else if (match($0, /^\[[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\] /))
+        { timestamp = substr($0,2,RLENGTH-3); message = substr($0,RLENGTH+1) }
+    # Syslog style: "Mon DD HH:MM:SS" (no year, e.g. dnsmasq.log)
+    else if (match($0, /^[A-Za-z]{3} +[0-9]{1,2} [0-9]{2}:[0-9]{2}:[0-9]{2} /))
+        { timestamp = substr($0,1,RLENGTH); message = substr($0,RLENGTH+1) }
+    # "DD Mon HH:MM:SS" (no year, e.g. ntpLog.log)
+    else if (match($0, /^[0-9]{1,2} [A-Za-z]{3} [0-9]{2}:[0-9]{2}:[0-9]{2} /))
         { timestamp = substr($0,1,RLENGTH); message = substr($0,RLENGTH+1) }
     else
         { timestamp = ""; message = $0 }
@@ -540,10 +559,16 @@ END {
                     j++
                 }
                 if (rep_count > 2) {
-                    print lines[i]
-                    print lines[i+1]
-                    clean_msg = strip_trailing_ws(content[i])
-                    print "[SUPPRESS] \"" clean_msg "\" repeated " (rep_count - 2) " times (no timestamp)"
+                    # A no-timestamp summary is 3 lines (2 visible + 1 [SUPPRESS]).
+                    # Only suppress when that is smaller than the original run.
+                    if (3 >= rep_count) {
+                        for (r = 0; r < rep_count; r++) print lines[i + r]
+                    } else {
+                        print lines[i]
+                        print lines[i+1]
+                        clean_msg = strip_trailing_ws(content[i])
+                        print "[SUPPRESS] \"" clean_msg "\" repeated " (rep_count - 2) " times (no timestamp)"
+                    }
                     i += rep_count
                     found = 1
                 }
@@ -627,15 +652,26 @@ END {
                 behavior_str = timing_type
                 if (timing_detail != "") behavior_str = behavior_str " " timing_detail
 
-                # Print 2 visible lines (Phase 1: 2 cycles visible)
-                print lines[i]
-                print lines[i+1]
-                print "[SUPPRESS] \"" clean_msg "\" repeated " suppressed_count " times (" behavior_str ", " window_str ")"
+                # Only suppress if the summary is actually SMALLER than the
+                # original run. A summary is 2 visible + 1 [SUPPRESS] line,
+                # plus 1 "At:" line for sporadic runs. For very short runs this
+                # would GROW the log, so emit the original lines unchanged.
+                emit_at = (timing_type == "sporadic" && ts_count > 2)
+                summary_lines = 3
+                if (emit_at) summary_lines = 4
+                if (summary_lines >= rep_count) {
+                    for (r = 0; r < rep_count; r++) print lines[i + r]
+                } else {
+                    # Print 2 visible lines (Phase 1: 2 cycles visible)
+                    print lines[i]
+                    print lines[i+1]
+                    print "[SUPPRESS] \"" clean_msg "\" repeated " suppressed_count " times (" behavior_str ", " window_str ")"
 
-                # Sporadic timestamps with date brackets (Phase 1 format)
-                if (timing_type == "sporadic" && ts_count > 2) {
-                    ts_list = build_sporadic_ts(rep_timestamps, 3, ts_count)
-                    if (ts_list != "") print "  At: " ts_list
+                    # Sporadic timestamps with date brackets (Phase 1 format)
+                    if (emit_at) {
+                        ts_list = build_sporadic_ts(rep_timestamps, 3, ts_count)
+                        if (ts_list != "") print "  At: " ts_list
+                    }
                 }
 
                 i += rep_count; found = 1
@@ -676,9 +712,6 @@ END {
                 }
                 if (rep_count > 2) {
                     suppressed_count = rep_count - 2
-
-                    # Print 2 visible cycles (Phase 1: 2 full cycles before suppression)
-                    for (k = 0; k < plen * 2; k++) print lines[i + k]
 
                     # Time window: from 2nd cycle to last cycle
                     ts_start     = timestamps[i + plen]
@@ -732,18 +765,31 @@ END {
                     # Phase 1 format: L-message pattern
                     behavior_str = timing_type
                     if (timing_detail != "") behavior_str = behavior_str " " timing_detail
-                    print "[SUPPRESS] " plen "-message pattern repeated " suppressed_count " times (" behavior_str ", " window_str ")"
 
-                    # Sporadic timestamps with date brackets (Phase 1 format)
-                    if (timing_type == "sporadic") {
-                        delete supp_ts; supp_count = 0
-                        for (r = 3; r <= rep_count; r++) {
-                            supp_count++
-                            supp_ts[supp_count] = timestamps[i + plen*(r-1)]
-                        }
-                        if (supp_count > 0) {
-                            ts_list = build_sporadic_ts(supp_ts, 1, supp_count)
-                            if (ts_list != "") print "  At: " ts_list
+                    # Only suppress if the summary is actually SMALLER than the
+                    # original run: 2 full cycles (2*plen) + 1 [SUPPRESS] line,
+                    # plus 1 "At:" line for sporadic. Otherwise emit unchanged.
+                    emit_at = (timing_type == "sporadic")
+                    summary_lines = plen * 2 + 1
+                    if (emit_at) summary_lines = summary_lines + 1
+                    if (summary_lines >= plen * rep_count) {
+                        for (k = 0; k < plen * rep_count; k++) print lines[i + k]
+                    } else {
+                        # Print 2 visible cycles (Phase 1: 2 full cycles)
+                        for (k = 0; k < plen * 2; k++) print lines[i + k]
+                        print "[SUPPRESS] " plen "-message pattern repeated " suppressed_count " times (" behavior_str ", " window_str ")"
+
+                        # Sporadic timestamps with date brackets (Phase 1 format)
+                        if (emit_at) {
+                            delete supp_ts; supp_count = 0
+                            for (r = 3; r <= rep_count; r++) {
+                                supp_count++
+                                supp_ts[supp_count] = timestamps[i + plen*(r-1)]
+                            }
+                            if (supp_count > 0) {
+                                ts_list = build_sporadic_ts(supp_ts, 1, supp_count)
+                                if (ts_list != "") print "  At: " ts_list
+                            }
                         }
                     }
 
