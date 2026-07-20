@@ -281,7 +281,7 @@ set_offset() {
 }
 
 # Dedicated log file for suppression statistics
-LOG_SUPPRESS_STATS_LOG="/rdklogs/logs/log_suppress_stats.txt"
+LOG_SUPPRESS_STATS_LOG="/nvram2/log_suppress_stats.txt"
 
 # Log function for suppression statistics - writes to dedicated stats file
 log_suppress_stats() {
@@ -1066,6 +1066,16 @@ suppress_logs_in_directory() {
         # These files log through rdk_logger and should NOT be suppressed
         if is_rdk_logger_file "$file"; then
             echo_t "  [SKIP-RDK] $(basename "$file"): RDK logger component file - not suppressing"
+            skipped_rdk=$((skipped_rdk + 1))
+            continue
+        fi
+        
+        # Skip files that already contain rdk_logger's built-in [SUPPRESS] summary lines.
+        # rdk_logger has its own log suppression (feature/RDKB-log-suppressor) that emits
+        # lines like: [SUPPRESS] Message repeated N times (burst/periodic/sporadic ...)
+        # If a file already has these, rdk_logger handles suppression — skip it.
+        if grep -q '\[SUPPRESS\] Message repeated' "$file" 2>/dev/null; then
+            echo_t "  [SKIP-RDK-SUPPRESS] $(basename "$file"): already suppressed by rdk_logger - skipping"
             skipped_rdk=$((skipped_rdk + 1))
             continue
         fi

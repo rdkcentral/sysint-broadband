@@ -547,7 +547,7 @@ HttpLogUpload()
         echo_t "File to be uploaded: $UploadFile"
 
         # Track file size being uploaded to cloud
-        LOG_SUPPRESS_STATS_LOG="/rdklogs/logs/log_suppress_stats.txt"
+        LOG_SUPPRESS_STATS_LOG="/nvram2/log_suppress_stats.txt"
         if [ -f "$UploadFile" ]; then
             upload_file_size=`du -sk "$UploadFile" 2>/dev/null | awk '{print $1}'`
             upload_file_size_bytes=`ls -l "$UploadFile" 2>/dev/null | awk '{print $5}'`
@@ -667,7 +667,7 @@ HttpLogUpload()
 		t2CountNotify "SYS_INFO_LOGS_UPLOADED"
 
                 # Log successful upload with file size
-                LOG_SUPPRESS_STATS_LOG="/rdklogs/logs/log_suppress_stats.txt"
+                LOG_SUPPRESS_STATS_LOG="/nvram2/log_suppress_stats.txt"
                 echo "[`date '+%Y-%m-%d %H:%M:%S'`] UPLOAD_SUCCESS: File=$UploadFile uploaded to cloud successfully" >> "$LOG_SUPPRESS_STATS_LOG" 2>/dev/null
 
                 # Clear suppression offsets after successful upload so next cycle reprocesses fresh
@@ -691,7 +691,7 @@ HttpLogUpload()
                     echo_t "LOGS UPLOAD FAILED, RETURN CODE: $http_code"
 
                     # Log failed upload
-                    LOG_SUPPRESS_STATS_LOG="/rdklogs/logs/log_suppress_stats.txt"
+                    LOG_SUPPRESS_STATS_LOG="/nvram2/log_suppress_stats.txt"
                     echo "[`date '+%Y-%m-%d %H:%M:%S'`] UPLOAD_FAILED: File=$UploadFile HTTP_CODE=$http_code" >> "$LOG_SUPPRESS_STATS_LOG" 2>/dev/null
                     preserveThisLog $UploadFile $UploadPath
                 fi

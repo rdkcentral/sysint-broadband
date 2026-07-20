@@ -262,10 +262,15 @@ log_file_update_offset()
         return
     fi
 
-    next_offset=`wc -l $LOG_SYNC_PATH$log_file | cut -d " " -f1`
+    # Use ORIGINAL file line count + 1 as next offset.
+    # The offset represents "start reading from this line next time" applied to the original.
+    # Previously used wc -l of the SYNC file, but log_suppress.sh modifies the sync
+    # file in-place (shrinking it), which corrupted the offset and caused re-syncing
+    # of already-processed content on subsequent cycles.
+    next_offset=$(( $(wc -l < "$LOG_PATH$log_file") + 1 ))
     # set next offset to the first line of the file
     if [ "$BOX_TYPE" = "SR213" ] && [ "$option" = "reboot" ]; then
-        awk 'NR==1{$0=$next_offset}1' $LOG_SYNC_PATH$log_file  > $LOG_SYNC_PATH/temp.txt;mv $LOG_SYNC_PATH/temp.txt $LOG_SYNC_PATH$log_file
+        awk -v off="$next_offset" 'NR==1{$0=off}1' $LOG_SYNC_PATH$log_file > $LOG_SYNC_PATH/temp.txt;mv $LOG_SYNC_PATH/temp.txt $LOG_SYNC_PATH$log_file
     else
         sed -i "1s/.*/$next_offset/" "$LOG_SYNC_PATH$log_file"
     fi
@@ -407,7 +412,7 @@ syncLogs_nvram2()
     fi
 
     # Log size tracking for suppression analysis
-    LOG_SUPPRESS_STATS_LOG="/rdklogs/logs/log_suppress_stats.txt"
+    LOG_SUPPRESS_STATS_LOG="/nvram2/log_suppress_stats.txt"
     TIMESTAMP=`date '+%Y-%m-%d %H:%M:%S'`
     
     # Ensure LOG_PATH is set (fallback to /rdklogs/logs if not set)
@@ -714,7 +719,7 @@ backupnvram2logs()
 	        if [ -f "$TAR_FILE" ]; then
 	            TAR_SIZE_BYTES=`ls -l "$TAR_FILE" | awk '{print $5}'`
 	            TAR_SIZE_KB=$((TAR_SIZE_BYTES / 1024))
-	            echo "[`date '+%Y-%m-%d %H:%M:%S'`] Tar file: $TAR_FILE Size: ${TAR_SIZE_KB}KB (${TAR_SIZE_BYTES} bytes)" >> /rdklogs/logs/log_suppress_stats.txt
+	            echo "[`date '+%Y-%m-%d %H:%M:%S'`] Tar file: $TAR_FILE Size: ${TAR_SIZE_KB}KB (${TAR_SIZE_BYTES} bytes)" >> /nvram2/log_suppress_stats.txt
 	            echo_t "RDK_LOGGER: Tar file: $TAR_FILE Size: ${TAR_SIZE_KB}KB"
 	        fi
         fi
@@ -741,12 +746,6 @@ backupnvram2logs()
 
 	for fname in $FILES
 	do
-		# Skip truncating the log suppression stats file - it needs to persist
-		case "$fname" in
-			log_suppress_stats.txt)
-				continue
-				;;
-		esac
 		>$fname;
 	done
 
@@ -835,7 +834,7 @@ backupnvram2logs_on_reboot()
     if [ -f "$TAR_FILE" ]; then
         TAR_SIZE_BYTES=`ls -l "$TAR_FILE" | awk '{print $5}'`
         TAR_SIZE_KB=$((TAR_SIZE_BYTES / 1024))
-        echo "[`date '+%Y-%m-%d %H:%M:%S'`] SIZE_TRACK [TAR_AFTER_SUPPRESS] File=$TAR_FILE Size=${TAR_SIZE_KB}KB (${TAR_SIZE_BYTES} bytes)" >> /rdklogs/logs/log_suppress_stats.txt
+        echo "[`date '+%Y-%m-%d %H:%M:%S'`] SIZE_TRACK [TAR_AFTER_SUPPRESS] File=$TAR_FILE Size=${TAR_SIZE_KB}KB (${TAR_SIZE_BYTES} bytes)" >> /nvram2/log_suppress_stats.txt
         echo_t "RDK_LOGGER: Tar file size after suppression: ${TAR_SIZE_KB}KB ($TAR_FILE)"
     fi
 
@@ -950,9 +949,8 @@ backupAllLogs()
 
 	for fname in $SOURCE_FILES
 	do
-		# Skip truncating the log suppression stats files - they need to persist
 		case "$fname" in
-			log_suppress_stats.txt|log_suppress_cpu_overhead.txt)
+			log_suppress_cpu_overhead.txt)
 				$operation $source$fname $dt
 				continue
 				;;
