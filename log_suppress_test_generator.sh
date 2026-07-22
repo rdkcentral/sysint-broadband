@@ -1,15 +1,37 @@
 #!/bin/sh
 ##########################################################################
 # log_suppress_test_generator.sh
-# Floods an existing log file with repeated lines to verify
-# log_suppress.sh behavior on device.
-# No dependencies. Runs indefinitely until killed.
-# Usage: sh log_suppress_test_generator.sh [log_file]
-# Default: /rdklogs/logs/agent.txt
+# Test tool: floods /rdklogs/logs/messages.txt with repeated lines
+# to verify log_suppress.sh behavior on device.
+#
+# Runs independently of log suppression pipeline.
+#
+# Start: touch /tmp/.log_suppress_test && sh /lib/rdk/log_suppress_test_generator.sh &
+# Stop:  rm /tmp/.log_suppress_test
+#
+# The script checks for the trigger file each cycle and exits when removed.
+# Can be launched at boot from /etc/cron.d or any init hook.
 ##########################################################################
 
-LOG_FILE="${1:-/rdklogs/logs/agent.txt}"
-CYCLE=0
+TRIGGER_FILE="/tmp/.log_suppress_test"
+LOG_FILE="/rdklogs/logs/messages.txt"
+PID_FILE="/tmp/.log_suppress_test_generator.pid"
+
+# Exit if trigger file doesn't exist
+if [ ! -f "$TRIGGER_FILE" ]; then
+    exit 0
+fi
+
+# Exit if already running
+if [ -f "$PID_FILE" ]; then
+    old_pid=$(cat "$PID_FILE" 2>/dev/null)
+    if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+        exit 0
+    fi
+fi
+
+# Record PID
+echo $$ > "$PID_FILE"
 
 timestamp() {
     date '+%y%m%d-%H:%M:%S'
@@ -17,14 +39,16 @@ timestamp() {
 
 cleanup() {
     echo "$(timestamp) LOG_SUPPRESS_TEST: Generator stopped after $CYCLE cycles pid=$$" >> "$LOG_FILE"
+    rm -f "$PID_FILE"
     exit 0
 }
 
 trap cleanup INT TERM
 
+CYCLE=0
 echo "$(timestamp) LOG_SUPPRESS_TEST: Generator started pid=$$ target=$LOG_FILE" >> "$LOG_FILE"
 
-while true; do
+while [ -f "$TRIGGER_FILE" ]; do
     TS=$(timestamp)
 
     # Unique lines (should never be suppressed)
@@ -65,20 +89,5 @@ while true; do
     CYCLE=$((CYCLE + 1))
     sleep 10
 done
-        echo "$TS XDNS: DNS query timeout for host telemetry.xfinity.com" >> "$LOG_FILE"
-        echo "$TS XDNS: Resolved telemetry.xfinity.com -> 96.118.$((i + CYCLE % 50)).$((CYCLE % 255))" >> "$LOG_FILE"
-        i=$((i + 1))
-    done
 
-    # Large flood: 100 identical lines every 5th cycle
-    if [ $((CYCLE % 5)) -eq 0 ] && [ "$CYCLE" -gt 0 ]; then
-        i=0
-        while [ "$i" -lt 100 ]; do
-            echo "$TS CcspMoCA: MoCA link down - no peers detected on network" >> "$LOG_FILE"
-            i=$((i + 1))
-        done
-    fi
-
-    CYCLE=$((CYCLE + 1))
-    sleep 10
-done
+cleanup
