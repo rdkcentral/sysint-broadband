@@ -22,11 +22,27 @@ PARTNER_URL_CACHE="/tmp/.rdklogger_partnerid_url_cache"
 _need_resolve=true
 
 if [ -f "$PARTNER_URL_CACHE" ]; then
+    # Ignore the cache unless it is a non-symlink file owned by root, to prevent an
+    # unprivileged process from pre-creating or tampering with it in /tmp.
+    _cache_uid="$(stat -c %u "$PARTNER_URL_CACHE" 2>/dev/null)"
+    if [ -h "$PARTNER_URL_CACHE" ] || [ "$_cache_uid" != "0" ]; then
+        _need_resolve=true
     # Invalidate cache if DCMSettings.conf was updated after cache was written
-    if [ -f /tmp/DCMSettings.conf ] && [ /tmp/DCMSettings.conf -nt "$PARTNER_URL_CACHE" ]; then
+    elif [ -f /tmp/DCMSettings.conf ] && [ /tmp/DCMSettings.conf -nt "$PARTNER_URL_CACHE" ]; then
         _need_resolve=true
     else
-        . "$PARTNER_URL_CACHE"
+        # Parse cached values without sourcing to avoid executing tampered content
+        partnerId=""
+        URL=""
+        while IFS='=' read -r key value; do
+            # Strip the leading and trailing double quotes from the value
+            value="${value#\"}"
+            value="${value%\"}"
+            case "$key" in
+                partnerId) partnerId="$value" ;;
+                URL)       URL="$value" ;;
+            esac
+        done < "$PARTNER_URL_CACHE"
         # Validate that cached values are non-empty
         if [ -n "$partnerId" ] && [ -n "$URL" ]; then
             _need_resolve=false
@@ -61,9 +77,13 @@ if [ "$_need_resolve" = "true" ]; then
           fi
     fi
 
-    # Write cache atomically (write to temp then move to avoid partial reads)
-    _tmp_cache="${PARTNER_URL_CACHE}.$$"
-    echo "partnerId=\"$partnerId\"" > "$_tmp_cache"
-    echo "URL=\"$URL\"" >> "$_tmp_cache"
-    mv "$_tmp_cache" "$PARTNER_URL_CACHE"
+    # Write cache atomically using a secure temp file created with mktemp to avoid
+    # predictable-name symlink attacks. umask is scoped to the subshell so it does
+    # not affect the sourcing parent script, and we avoid 'exit' for the same reason.
+    _tmp_cache="$(umask 077; mktemp "${PARTNER_URL_CACHE}.XXXXXX" 2>/dev/null)"
+    if [ -n "$_tmp_cache" ]; then
+        printf 'partnerId="%s"\n' "$partnerId" > "$_tmp_cache"
+        printf 'URL="%s"\n' "$URL" >> "$_tmp_cache"
+        mv -f "$_tmp_cache" "$PARTNER_URL_CACHE"
+    fi
 fi
