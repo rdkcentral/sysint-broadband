@@ -70,7 +70,7 @@ Timestamp()
 # Get the MAC address of the machine
 getMacAddressOnly()
 {
-     if [ "$BOX_TYPE" = "HUB4" ] || [ "$BOX_TYPE" = "SR300" ] || [ "x$BOX_TYPE" = "xSR213" ] || [ "$BOX_TYPE" = "SE501" ] || [ "$BOX_TYPE" = "SCER11BEL" ] || [ "$BOX_TYPE" = "SCXF11BFL" ]; then
+     if [ "$BOX_TYPE" = "HUB4" ] || [ "$BOX_TYPE" = "SR300" ] || [ "x$BOX_TYPE" = "xSR213" ] || [ "$BOX_TYPE" = "SE501" ] || [ "$BOX_TYPE" = "SCER11BEL" ] || [ "$BOX_TYPE" = "SCXF11BFL" ] || [ "$BOX_TYPE" == "XER2" ]; then
          #FEATURE_RDKB_WAN_MANAGER
          mac=`cat /sys/class/net/$WANINTERFACE/address | tr '[a-f]' '[A-F]' `
          if [ -z "$mac" ]; then
@@ -162,7 +162,7 @@ getMacAddress()
         mac=`dmcli eRT retv Device.DPoE.Mac_address`
     elif [ "$BOX_TYPE" = "XB6" ] || [ "$BOX_TYPE" = "TCCBR" ];then
         mac=`dmcli eRT retv Device.X_CISCO_COM_CableModem.MACAddress`
-    elif [ "$BOX_TYPE" = "VNTXER5" ] || [ "$BOX_TYPE" = "SCER11BEL" ] || [ "$BOX_TYPE" = "SCXF11BFL" ]; then
+    elif [ "$BOX_TYPE" = "VNTXER5" ] || [ "$BOX_TYPE" = "SCER11BEL" ] || [ "$BOX_TYPE" = "SCXF11BFL" ] || [ "$BOX_TYPE" == "XER2" ]; then
 	# XER5 base mac or ethwan mac can be retrived via below tr-181.
 	mac=`dmcli eRT retv Device.DeviceInfo.X_COMCAST-COM_CM_MAC`
     elif [ "$BOX_TYPE" = "HUB4" ] || [ "$BOX_TYPE" = "SR300" ] || [ "x$BOX_TYPE" = "xSR213" ] || [ "$BOX_TYPE" = "SE501" ] || [ "$BOX_TYPE" = "WNXL11BWL" ]; then
@@ -180,7 +180,7 @@ getMacAddress()
 ## Get eSTB mac address 
 getErouterMacAddress()
 {
-    if [ "$BOX_TYPE" = "HUB4" ] || [ "$BOX_TYPE" = "SR300" ] || [ "x$BOX_TYPE" = "xSR213" ] || [ "$BOX_TYPE" = "SE501" ] || [ "$BOX_TYPE" = "WNXL11BWL" ] || [ "$BOX_TYPE" = "SCER11BEL" ] || [ "$BOX_TYPE" = "SCXF11BFL" ]; then
+    if [ "$BOX_TYPE" = "HUB4" ] || [ "$BOX_TYPE" = "SR300" ] || [ "x$BOX_TYPE" = "xSR213" ] || [ "$BOX_TYPE" = "SE501" ] || [ "$BOX_TYPE" = "WNXL11BWL" ] || [ "$BOX_TYPE" = "SCER11BEL" ] || [ "$BOX_TYPE" = "SCXF11BFL" ] || [ "$BOX_TYPE" == "XER2" ]; then
         #FEATURE_RDKB_WAN_MANAGER
         erouterMac=`cat /sys/class/net/$WANINTERFACE/address | tr '[a-f]' '[A-F]' `
         if [ -z "$erouterMac" ]; then
