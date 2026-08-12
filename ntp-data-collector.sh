@@ -15,6 +15,11 @@ fi
 DEBUG_INTERVAL=120      
 TELEMETRY_INTERVAL=14400 
 
+if [ "$(syscfg get chrony_enabled)" = "true" ]; then
+        echo "RFC flag Present — chrony is the active NTP client.Stopping Data collection for NTPD" >> $NTPD_LOG_NAME
+	exit 0
+fi
+
 send_to_telemetry() {
     metrics_line="$1"
     DELAY=$(echo "$metrics_line" | awk '{print $(NF-2)}')
