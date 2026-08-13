@@ -7,4 +7,4 @@ Type=simple
 ExecStart=/lib/rdk/ntp-data-collector.sh
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=rdkntp.target
