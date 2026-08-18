@@ -64,14 +64,16 @@ fi
 # detection-fix for the same failure mode on a different chronyc command).
 offset=$(printf '%s\n' "$tracking" | awk '/^Last offset/ {print $4}')
 frequency=$(printf '%s\n' "$tracking" | awk '/^Frequency/ {print $3}')
+delay=$(printf '%s\n' "$tracking" | awk '/^Root delay/ {print $4}')
 
-if [ -z "$offset" ] || [ -z "$frequency" ]; then
-    log_msg "unable to parse Last offset/Frequency from chronyc tracking output, skipping this sample"
+if [ -z "$offset" ] || [ -z "$frequency" ] || [ -z "$delay" ]; then
+    log_msg "unable to parse Metrics from chronyc tracking output, skipping this sample"
     exit 1
 fi
 
-log_msg "offset=$offset frequency=$frequency"
-t2ValNotify "SYS_INFO_NTPDELAY_split" "$offset"
+log_msg "Offset=$offset;Frequency=$frequency;Delay=$delay"
+t2ValNotify "SYS_INFO_NTPDELTA_split" "$offset"
+t2ValNotify "SYS_INFO_NTPDELAY_split" "$delay"
 t2ValNotify "SYS_INFO_NTPFREQUENCY_split" "$frequency"
 
 exit 0
