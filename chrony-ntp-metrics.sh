@@ -43,7 +43,7 @@ if [ -z "$NTPD_LOG_NAME" ]; then
 fi
 
 log_msg() {
-    echo "$(date) CHRONY_OFFSET_METRICS : $1" >> "$NTPD_LOG_NAME"
+    echo "$(date) CHRONY_METRICS : $1" >> "$NTPD_LOG_NAME"
 }
 
 # Gate: only sample when chrony is the active RFC-selected NTP client.
@@ -61,8 +61,8 @@ fi
 # Match by field label, not fixed column position — chronyc's column widths
 # shift depending on the values being printed (see chrony-source-selectable-
 # detection-fix for the same failure mode on a different chronyc command).
-offset=$(echo "$tracking" | awk -F: '/Last offset/ {print $2}' | awk '{print $1}')
-frequency=$(echo "$tracking" | awk -F: '/Frequency/ {print $2}' | sed 's/^[ \t]*//')
+offset=$(printf '%s\n' "$tracking" | awk '/^Last offset/ {print $4}')
+frequency=$(printf '%s\n' "$tracking" | awk '/^Frequency/ {print $3}')
 
 if [ -z "$offset" ] || [ -z "$frequency" ]; then
     log_msg "unable to parse Last offset/Frequency from chronyc tracking output, skipping this sample"
@@ -70,6 +70,7 @@ if [ -z "$offset" ] || [ -z "$frequency" ]; then
 fi
 
 log_msg "offset=$offset frequency=$frequency"
-t2ValNotify "SYS_INFO_NTP_DELTA_split" "offset_s=$offset,freq=$frequency"
+t2ValNotify "SYS_INFO_NTP_DELTA_split" "$offset"
+t2ValNotify "SYS_INFO_NTP_FREQUENCY_split" "$frequency"
 
 exit 0
