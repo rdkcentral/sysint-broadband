@@ -70,7 +70,7 @@ if [ -z "$offset" ] || [ -z "$frequency" ]; then
 fi
 
 log_msg "offset=$offset frequency=$frequency"
-t2ValNotify "SYS_INFO_NTP_DELTA_split" "$offset"
-t2ValNotify "SYS_INFO_NTP_FREQUENCY_split" "$frequency"
+t2ValNotify "SYS_INFO_NTPDELAY_split" "$offset"
+t2ValNotify "SYS_INFO_NTPFREQUENCY_split" "$frequency"
 
 exit 0
