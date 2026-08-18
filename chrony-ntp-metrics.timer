@@ -21,7 +21,7 @@
 Description=Timer for Chrony Offset/Frequency Metrics Collector
 
 [Timer]
-OnBootSec=300s
+OnActiveSec=10min
 OnUnitActiveSec=10min
 Unit=chrony-ntp-metrics.service
 
