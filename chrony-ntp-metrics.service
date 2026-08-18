@@ -18,9 +18,9 @@
 ##############################################################################
 
 [Unit]
-Description=Chrony Offset/Frequency Metrics Sampler (oneshot)
+Description=Chrony NTP Metrics collector
 After=chronyd.service
 
 [Service]
 Type=oneshot
-ExecStart=/lib/rdk/chrony_offset_metrics.sh
+ExecStart=/lib/rdk/chrony-ntp-metrics.sh
