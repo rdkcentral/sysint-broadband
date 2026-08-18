@@ -28,6 +28,7 @@ send_to_telemetry() {
 
     echo "$(date) Sending NTP metrics to telemetry: Delay=$DELAY Offset=$OFFSET Jitter=$JITTER" >> $NTPD_LOG_NAME
     t2ValNotify "SYS_INFO_NTPDELAY_split" "$DELAY"
+    t2ValNotify "SYS_INFO_NTPDELTA_split" "$OFFSET"
 
 }
 
