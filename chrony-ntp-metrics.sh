@@ -49,6 +49,7 @@ log_msg() {
 # Gate: only sample when chrony is the active RFC-selected NTP client.
 chrony_enabled=$(syscfg get chrony_enabled 2>/dev/null)
 if [ "$chrony_enabled" != "true" ]; then
+    log_msg "ntpd is the active NTP client. Stopping data collection for chronyd."
     exit 0
 fi
 
