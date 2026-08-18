@@ -25,3 +25,5 @@ OnActiveSec=10min
 OnUnitActiveSec=10min
 Unit=chrony-ntp-metrics.service
 
+[Install]
+WantedBy=multi-user.target
