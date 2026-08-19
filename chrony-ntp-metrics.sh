@@ -35,7 +35,7 @@
 . /etc/device.properties
 
 if [ -f /lib/rdk/t2Shared_api.sh ]; then
-    source /lib/rdk/t2Shared_api.sh
+    . /lib/rdk/t2Shared_api.sh
 fi
 
 if [ -z "$NTPD_LOG_NAME" ]; then
