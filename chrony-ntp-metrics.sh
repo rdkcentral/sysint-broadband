@@ -75,4 +75,7 @@ t2ValNotify "SYS_INFO_NTPDELTA_split" "$offset"
 t2ValNotify "SYS_INFO_NTPDELAY_split" "$delay"
 t2ValNotify "SYS_INFO_NTPFREQUENCY_split" "$frequency"
 
+# block until the backgrounded telemetry2_0_client forks (from t2ValNotify) finish
+wait 
+
 log_msg "Offset=$offset;Frequency=$frequency;Delay=$delay"
