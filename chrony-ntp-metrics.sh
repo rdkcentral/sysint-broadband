@@ -71,8 +71,8 @@ if [ -z "$offset" ] || [ -z "$frequency" ] || [ -z "$delay" ]; then
     exit 1
 fi
 
-log_msg "Offset=$offset;Frequency=$frequency;Delay=$delay"
 t2ValNotify "SYS_INFO_NTPDELTA_split" "$offset"
 t2ValNotify "SYS_INFO_NTPDELAY_split" "$delay"
 t2ValNotify "SYS_INFO_NTPFREQUENCY_split" "$frequency"
 
+log_msg "Offset=$offset;Frequency=$frequency;Delay=$delay"
