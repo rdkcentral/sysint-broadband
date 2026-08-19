@@ -76,4 +76,3 @@ t2ValNotify "SYS_INFO_NTPDELTA_split" "$offset"
 t2ValNotify "SYS_INFO_NTPDELAY_split" "$delay"
 t2ValNotify "SYS_INFO_NTPFREQUENCY_split" "$frequency"
 
-exit 0
