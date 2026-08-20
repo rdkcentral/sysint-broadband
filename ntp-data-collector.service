@@ -1,9 +1,10 @@
 [Unit]
 Description=NTP Data Collection
+After=gwprovapp.service
 
 [Service]
 Type=simple
 ExecStart=/lib/rdk/ntp-data-collector.sh
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=rdkntp.target
