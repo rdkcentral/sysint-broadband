@@ -25,7 +25,9 @@
 APPARMOR_LOG_FILE="/rdklogs/logs/apparmor.txt"
 current_time=0
 lastync_time=0
-BootupLog_is_updated=0
+# Persistent marker so the once-per-boot full journal dump is not repeated on
+# every cron tick (each tick is a separate process; /tmp is tmpfs, cleared on reboot).
+BOOTUP_LOG_FLAG="/tmp/.journal_bootup_dump_done"
 
 JOURNAL_RUNTIME_DIR="/run/systemd/journald.conf.d"
 JOURNAL_OVERRIDE_FILE="${JOURNAL_RUNTIME_DIR}/override.conf"
@@ -90,9 +92,9 @@ EOF
    cat ${DMESG_FILE} | grep -i "apparmor" > ${APPARMOR_LOG_FILE}
    if [ "$BOX_TYPE" = "XB6" ] || [ "$BOX_TYPE" = "XF3" ] || [ "$BOX_TYPE" = "TCCBR" ] || [ "$BOX_TYPE" == "VNTXER5" ] || [ "$BOX_TYPE" == "SCER11BEL" ] || [ "$BOX_TYPE" == "SCXF11BFL" ] || [ "$BOX_TYPE" == "XER2" ];then
 	   #ARRISXB6-7973: Complete journalctl logs to /rdklogs/logs/journal_logs.txt.0
-           if [ $uptime_in_secs -ge 240 ]  && [ $BootupLog_is_updated -eq 0 ]; then
+       if [ $uptime_in_secs -ge 240 ] && [ ! -f "$BOOTUP_LOG_FLAG" ]; then
                 nice -n 19 journalctl > ${journal_log}
-                BootupLog_is_updated=1;
+                touch "$BOOTUP_LOG_FLAG"
            fi
    fi
 }
