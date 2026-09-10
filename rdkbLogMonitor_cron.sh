@@ -89,6 +89,7 @@ ARCHIVE_READY_FLAG="$RDKB_LOGMON_TMP_DIR/.archive_ready"
 REBOOT_WORKFLOW_DONE="$RDKB_LOGMON_TMP_DIR/.reboot_workflow_done"
 BOOT_ARCHIVE_DONE="$RDKB_LOGMON_TMP_DIR/.boot_archive_done"
 INITIAL_BOOT_MARKER="$RDKB_LOGMON_TMP_DIR/.initial_boot_done"
+DEVICE_UP_FLAG="$RDKB_LOGMON_TMP_DIR/.device_up_logged"
 
 if [ ! -d "$RDKB_LOGMON_TMP_DIR" ]; then
     mkdir -p "$RDKB_LOGMON_TMP_DIR"
@@ -896,6 +897,11 @@ install_cron_entry() {
 
 device_state()
 {
+    # In cron mode, skip if we've already logged boot for this boot cycle.
+    if [ "$CRON_MODE" = "1" ] && [ -f "$DEVICE_UP_FLAG" ]; then
+        return 0
+    fi
+
     if [ "$DeviceUP" = "0" ]; then
 	        #for rdkb-4260
 		t2CountNotify "SYS_INFO_bootup"
@@ -909,6 +915,11 @@ device_state()
 	        else
 	           echo_t "RDKB_REBOOT: Device is up after reboot"
 	           DeviceUP=1
+	        fi
+
+	        # Persist the state only in cron mode.
+	        if [ "$CRON_MODE" = "1" ]; then
+	            touch "$DEVICE_UP_FLAG"
 	        fi
 	    fi
 }

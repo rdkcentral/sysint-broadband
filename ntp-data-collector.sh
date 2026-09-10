@@ -15,6 +15,11 @@ fi
 DEBUG_INTERVAL=120      
 TELEMETRY_INTERVAL=14400 
 
+if [ "$(syscfg get chrony_enabled)" = "true" ]; then
+    echo "$(date) Chrony is the active NTP client. Stopping data collection for NTPD." >> "$NTPD_LOG_NAME"
+    exit 0
+fi
+
 send_to_telemetry() {
     metrics_line="$1"
     DELAY=$(echo "$metrics_line" | awk '{print $(NF-2)}')
@@ -23,6 +28,7 @@ send_to_telemetry() {
 
     echo "$(date) Sending NTP metrics to telemetry: Delay=$DELAY Offset=$OFFSET Jitter=$JITTER" >> $NTPD_LOG_NAME
     t2ValNotify "SYS_INFO_NTPDELAY_split" "$DELAY"
+    t2ValNotify "SYS_INFO_NTPDELTA_split" "$OFFSET"
 
 }
 

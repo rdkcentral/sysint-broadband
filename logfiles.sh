@@ -690,7 +690,7 @@ backupnvram2logs()
 	rm -rf $LOG_SYNC_PATH*.log*
 	rm -rf $LOG_SYNC_PATH*core*
 	rm -rf $LOG_SYNC_PATH*.bin*
-	if [ "$BOX_TYPE" == "HUB4" ] || [ "$BOX_TYPE" == "SR300" ] || [ "x$BOX_TYPE" == "xSR213" ] || [ "$BOX_TYPE" == "SE501" ] || [ "$BOX_TYPE" == "WNXL11BWL" ] || [ "$BOX_TYPE" == "SCER11BEL" ] || [ "$BOX_TYPE" == "SCXF11BFL" ]; then
+	if [ "$BOX_TYPE" == "HUB4" ] || [ "$BOX_TYPE" == "SR300" ] || [ "x$BOX_TYPE" == "xSR213" ] || [ "$BOX_TYPE" == "SE501" ] || [ "$BOX_TYPE" == "WNXL11BWL" ] || [ "$BOX_TYPE" == "SCER11BEL" ] || [ "$BOX_TYPE" == "SCXF11BFL" ] || [ "$BOX_TYPE" == "XER2" ]; then
 		rm -rf $LOG_SYNC_PATH*tar.gz*
 	fi
 	rm -rf $LOG_SYNC_PATH$PcdLogFile
@@ -793,7 +793,7 @@ backupnvram2logs_on_reboot()
 	rm -rf $TarFolder*core*
 	rm -rf $TarFolder*.bin*
 
-	if [ "$BOX_TYPE" == "HUB4" ] || [ "$BOX_TYPE" == "SR300" ] || [ "$BOX_TYPE" == "SR213" ] || [ "$BOX_TYPE" == "SE501" ] || [ "$BOX_TYPE" == "WNXL11BWL" ] || [ "$BOX_TYPE" == "SCER11BEL" ] || [ "$BOX_TYPE" == "SCXF11BFL" ]; then
+	if [ "$BOX_TYPE" == "HUB4" ] || [ "$BOX_TYPE" == "SR300" ] || [ "$BOX_TYPE" == "SR213" ] || [ "$BOX_TYPE" == "SE501" ] || [ "$BOX_TYPE" == "WNXL11BWL" ] || [ "$BOX_TYPE" == "SCER11BEL" ] || [ "$BOX_TYPE" == "SCXF11BFL" ] || [ "$BOX_TYPE" == "XER2" ]; then
 		rm -rf $TarFolder*tar.gz*
 	fi
 
