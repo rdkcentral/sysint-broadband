@@ -129,6 +129,15 @@ case $oper in
 			CM_IP=`getCMIPAddress`
 		fi #if [ "$MANUFACTURE" = "Technicolor" -a "$BOX_TYPE" != "XB3" ]; then
 	     fi #if [ -f "/nvram/ETHWAN_ENABLE" ];then
+             # Refuse to (re)establish the tunnel if WAN_INTERFACE has no global IP right now
+             # (e.g. after 'ip addr flush'); otherwise a stale CM_IP would mask a real outage.
+             WAN_IP4_CHECK=`ip -4 addr show dev $WAN_INTERFACE scope global 2>/dev/null | awk '/inet/{print $2}'`
+             WAN_IP6_CHECK=`ip -6 addr show dev $WAN_INTERFACE scope global 2>/dev/null | awk '/inet6/{print $2}'`
+             if [ -z "$WAN_IP4_CHECK" ] && [ -z "$WAN_IP6_CHECK" ]; then
+                 echo "Error: $WAN_INTERFACE has no global IPv4/IPv6 address, refusing to start reverse SSH tunnel"
+                 t2CountNotify "REVSSH_WAN_DOWN"
+                 exit 127
+             fi
              # Replace CM_IP with value
              args=`echo $* | sed "s/CM_IP/$CM_IP/g"`
              if [ ! -f /usr/bin/GetConfigFile ];then
