@@ -245,11 +245,7 @@ log_file_update_modify_time()
 
     modify_time=`stat -c %Y $LOG_PATH$log_file`
     # set last modification time to the first line of the file
-    if [ "$BOX_TYPE" = "SR213" ] && [ "$option" = "reboot" ]; then
-        awk 'NR==1{$0=$modify_time}1' $LOG_SYNC_PATH$log_file  > $LOG_SYNC_PATH/temp.txt;mv $LOG_SYNC_PATH/temp.txt $LOG_SYNC_PATH$log_file
-    else
-        sed -i "1s/.*/$modify_time/" $LOG_SYNC_PATH$log_file
-    fi
+    sed -i "1s/.*/$modify_time/" $LOG_SYNC_PATH$log_file
 }
 
 
@@ -264,11 +260,7 @@ log_file_update_offset()
 
     next_offset=`wc -l $LOG_SYNC_PATH$log_file | cut -d " " -f1`
     # set next offset to the first line of the file
-    if [ "$BOX_TYPE" = "SR213" ] && [ "$option" = "reboot" ]; then
-        awk 'NR==1{$0=$next_offset}1' $LOG_SYNC_PATH$log_file  > $LOG_SYNC_PATH/temp.txt;mv $LOG_SYNC_PATH/temp.txt $LOG_SYNC_PATH$log_file
-    else
-        sed -i "1s/.*/$next_offset/" "$LOG_SYNC_PATH$log_file"
-    fi
+    sed -i "1s/.*/$next_offset/" "$LOG_SYNC_PATH$log_file"
 }
 
 
@@ -286,8 +278,7 @@ log_file_is_rollover_occured()
     log_file=$1
 
     cur_modify_time=`stat -c %Y $LOG_PATH$log_file`
-#    prev_modify_time=`sed -n '1p' $LOG_SYNC_PATH$log_file`
-    prev_modify_time=`head -n 1 $LOG_SYNC_PATH$log_file`
+    prev_modify_time=`sed -n '1p' $LOG_SYNC_PATH$log_file`
 
     if [ "$cur_modify_time" != "$prev_modify_time" ]; then
         true
@@ -342,11 +333,7 @@ log_files_sync_to_nvram2()
             fi
         fi
 
-        if [ "$BOX_TYPE" = "SR213" ] && [ "$option" = "reboot" ]; then
-            offset=`head -n 1 $LOG_SYNC_PATH$main_log_file`
-        else
-            offset=`sed -n '1p' $LOG_SYNC_PATH$main_log_file`
-        fi
+        offset=`sed -n '1p' $LOG_SYNC_PATH$main_log_file`
         #PART of ARRISXB6-11061, to have numeral and null check for offset
         if ! is_numeral $offset; then
             continue
