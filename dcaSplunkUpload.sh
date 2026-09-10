@@ -53,7 +53,7 @@ HTTP_FILENAME="/tmp/dca_httpret$$.txt"
 
 DCMRESPONSE="$PERSISTENT_PATH/DCMresponse.txt"
 
-PEER_COMM_ID="/tmp/elxrretyt-dcas.swr"
+PEER_COMM_ID="/tmp/interchip"
 
 
 if [ ! -f /usr/bin/GetConfigFile ];then
