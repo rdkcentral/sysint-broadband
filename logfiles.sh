@@ -40,7 +40,7 @@ SCP_WAITING="/tmp/scp_waiting"
 
 SCP_COMPLETE="/tmp/.scp_done"
 
-PEER_COMM_ID="/tmp/elxrretyt-logf.swr"
+PEER_COMM_ID="/tmp/interchip"
 if [ -f /etc/ONBOARD_LOGGING_ENABLE ]; then
     ONBOARDLOGS_NVRAM_BACKUP_PATH="/nvram2/onboardlogs/"
     ONBOARDLOGS_TMP_BACKUP_PATH="/tmp/onboardlogs/"
