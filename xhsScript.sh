@@ -36,9 +36,9 @@ fi
 #Retrieve Parameter2
 mkdir -p /tmp/xhs
 if [ "$cust_idx" = "cox" ];then
-    COMMID="/tmp/xhs/cyavtfjzx.pse-cox"
+    COMMID="/tmp/xhs/xhs-param2-cox"
 else
-    COMMID="/tmp/xhs/cyavtfjzx.pse"
+    COMMID="/tmp/xhs/xhs-param2"
 fi
 
 GetConfigFile $COMMID
