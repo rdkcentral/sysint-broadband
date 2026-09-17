@@ -141,7 +141,7 @@ case $oper in
              else
                      REVSSH_PID1=""
              fi
-             GetConfigFile /tmp/nvgeajacl.ipe stdout | /usr/bin/ssh -i /dev/stdin $args &
+             GetConfigFile /tmp/webpa-user stdout | /usr/bin/ssh -i /dev/stdin $args &
              sleep 10
              REVSSH_PID2=`cat /var/tmp/rssh.pid `
              if [ -z "$REVSSH_PID2" ] ||[ "$REVSSH_PID1" == "$REVSSH_PID2" ]; then
