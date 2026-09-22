@@ -70,7 +70,7 @@ Timestamp()
 # Get the MAC address of the machine
 getMacAddressOnly()
 {
-     if [ "$BOX_TYPE" = "HUB4" ] || [ "$BOX_TYPE" = "SR300" ] || [ "x$BOX_TYPE" = "xSR213" ] || [ "$BOX_TYPE" = "SE501" ] || [ "$BOX_TYPE" = "SCER11BEL" ] || [ "$BOX_TYPE" = "SCXF11BFL" ] || [ "$BOX_TYPE" == "XER2" ]; then
+     if [ "$BOX_TYPE" = "HUB4" ] || [ "$BOX_TYPE" = "SR300" ] || [ "x$BOX_TYPE" = "xSR213" ] || [ "$BOX_TYPE" = "SE501" ] || [ "$BOX_TYPE" = "SCXF11BFL" ] || [ "$BOX_TYPE" == "XER2" ]; then
          #FEATURE_RDKB_WAN_MANAGER
          mac=`cat /sys/class/net/$WANINTERFACE/address | tr '[a-f]' '[A-F]' `
          if [ -z "$mac" ]; then
