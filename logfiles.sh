@@ -245,7 +245,7 @@ log_file_update_modify_time()
 
     modify_time=`stat -c %Y $LOG_PATH$log_file`
     # set last modification time to the first line of the file
-        sed -i "1s/.*/$modify_time/" $LOG_SYNC_PATH$log_file
+    sed -i "1s/.*/$modify_time/" $LOG_SYNC_PATH$log_file
 }
 
 
@@ -260,7 +260,7 @@ log_file_update_offset()
 
     next_offset=`wc -l $LOG_SYNC_PATH$log_file | cut -d " " -f1`
     # set next offset to the first line of the file
-        sed -i "1s/.*/$next_offset/" "$LOG_SYNC_PATH$log_file"
+    sed -i "1s/.*/$next_offset/" "$LOG_SYNC_PATH$log_file"
 }
 
 
@@ -333,7 +333,7 @@ log_files_sync_to_nvram2()
             fi
         fi
 
-            offset=`sed -n '1p' $LOG_SYNC_PATH$main_log_file`
+        offset=`sed -n '1p' $LOG_SYNC_PATH$main_log_file`
         #PART of ARRISXB6-11061, to have numeral and null check for offset
         if ! is_numeral $offset; then
             continue
