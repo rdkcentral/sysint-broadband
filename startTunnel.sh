@@ -125,6 +125,17 @@ case $oper in
 			if [ -z "$CM_IP" ]; then
 				CM_IP=`ifconfig $CMINTERFACE | grep "inet addr" | awk '/inet/{print $2}'  | cut -f2 -d: | head -n1`
 			fi
+		elif [ "$BOX_TYPE" = "SCXF11BFL" ];then
+			echo " [startTunnel]: Getting CM_IP for BOX_TYPE = $BOX_TYPE "
+			CM_IPV4=`ifconfig $WAN_INTERFACE | grep "inet addr" | awk '/inet/{print $2}'  | cut -f2 -d: | head -n1`
+			IpCheckVal=$(echo ${CM_IPV4} | tr "." " " | awk '{ print $3"."$4 }')
+			Check=$(ip_to_hex $IpCheckVal)
+			# getting the IPV6 address for CM
+			CM_IP=`ifconfig $WAN_INTERFACE | grep Global |  awk '/inet6/{print $3}' | cut -d '/' -f1`
+			if [ -z "$CM_IP" ]; then
+				CM_IP=$CM_IPV4
+			fi
+			echo " [startTunnel]: Obtained CM_IP = $CM_IP "
 		else
 			CM_IP=`getCMIPAddress`
 		fi #if [ "$MANUFACTURE" = "Technicolor" -a "$BOX_TYPE" != "XB3" ]; then
