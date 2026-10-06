@@ -100,7 +100,7 @@ if [ -f $EnableOCSPStapling ] || [ -f $EnableOCSP ]; then
     CERT_STATUS="--cert-status"
 fi
 
-PEER_COMM_ID="/tmp/elxrretyt-dcm.swr"
+PEER_COMM_ID="/tmp/interchip"
 
 if [ ! -f /usr/bin/GetConfigFile ];then
     echo "Error: GetConfigFile Not Found"
