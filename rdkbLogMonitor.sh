@@ -659,7 +659,7 @@ else
 fi
 ########################################################
 
-PEER_COMM_ID="/tmp/interchip"
+PEER_COMM_ID="/tmp/interchip-logm.swr"
 
 RebootReason=`syscfg get X_RDKCENTRAL-COM_LastRebootReason`
 
