@@ -62,7 +62,7 @@ case $oper in
            start)
          WAN_INTERFACE=$(getWanInterfaceName)
          DEF_WAN_INTERFACE=$(getWanMacInterfaceName)
-	     if [ -f "/nvram/ETHWAN_ENABLE" ];then
+	     if [ -f "/nvram/ETHWAN_ENABLE" ] || [ -f "/nvram/PON_GATEWAY" ]; then
 		CM_IPV4=`ifconfig $WAN_INTERFACE | grep "inet addr" | awk '/inet/{print $2}'  | cut -f2 -d: | head -n1`
 		IpCheckVal=$(echo ${CM_IPV4} | tr "." " " | awk '{ print $3"."$4 }')
 		Check=$(ip_to_hex $IpCheckVal)
