@@ -76,6 +76,8 @@ getMacAddressOnly()
          if [ -z "$mac" ]; then
             mac=$(sysevent get eth_wan_mac | tr '[a-f]' '[A-F]')
          fi
+     elif [ "$BOX_TYPE" = "SCER11BEL" ]; then
+         mac=$(printf "%012X" $((0x$(deviceinfo.sh -cmac | tr -d ':') + 2)) | sed 's/../&:/g;s/:$//') 	     
      else	
         mac=`cat /sys/class/net/$wan_interface/address | sed 's/://g' | tr '[a-f]' '[A-F]'`
      fi
