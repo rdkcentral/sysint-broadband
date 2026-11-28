@@ -18,7 +18,32 @@
 # limitations under the License.
 ##########################################################################
 #
+LOG=/rdklogs/logs/rfc_trace.log
 
+log() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S.%3N') | $*" >> "$LOG"
+}
+
+log "UPTIME=$(cut -d' ' -f1 /proc/uptime)"
+log "========== RFC SERVICE INVOKED =========="
+
+log "PID=$$ PPID=$PPID"
+log "SELF CMD=$(tr '\0' ' ' < /proc/$$/cmdline)"
+
+log "PARENT CMD=$(tr '\0' ' ' < /proc/$PPID/cmdline 2>/dev/null)"
+log "PARENT COMM=$(cat /proc/$PPID/comm 2>/dev/null)"
+
+log "---- PROCESS TREE ----"
+pid=$$
+while [ "$pid" -gt 1 ]; do
+    cmd=$(tr '\0' ' ' < /proc/$pid/cmdline 2>/dev/null)
+    log "PID=$pid CMD=$cmd"
+    pid=$(awk '{print $4}' /proc/$pid/stat 2>/dev/null)
+done
+
+log "========================================="
+
+echo "RFC service START ing here ...: $(date)"
 . /etc/include.properties
 . /etc/device.properties
 
@@ -48,7 +73,9 @@ else
      if [ "x$BOX_TYPE" == "xTCCBR" ]; then
          sleep 300
      fi
+    echo "RFC MGR is called here ... : $(date)"
     /usr/bin/rfcMgr &
+    echo "RFC MGR execution finished here ... : $(date)"
 fi
-
+echo "RFC service END ing here ... : $(date)"
 

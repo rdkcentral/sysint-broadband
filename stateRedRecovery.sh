@@ -1,5 +1,7 @@
 #!/bin/sh
 
+echo "STATE_RED_RECOVERY CALLED at $(date) PID=$$ PPID=$PPID CMD=$(cat /proc/$PPID/cmdline)" >> /rdklogs/logs/stateRed_trace.log
+
 . /etc/include.properties
 
 echo "STATE RED RECOVERY, Initiating recovery software download" >> /rdklogs/logs/xconf.txt.0
@@ -14,4 +16,6 @@ else
     FIRMWARE_DOWNLOAD='_firmwareDwnld.sh'
     SCRIPT_NAME="$BOX$FIRMWARE_DOWNLOAD"
 fi
+
+echo "Calling firmwareDwnld from stateRedRecovery PID=$$" >> /rdklogs/logs/stateRed_trace.log
 sh /etc/$SCRIPT_NAME 6 2>&1
